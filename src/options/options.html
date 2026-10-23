@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Snap Companion — Settings</title>
+  <link rel="icon" href="../../icons/32.png">
+  <link rel="stylesheet" href="../ui/common.css">
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <header>
+      <img src="../../icons/48.png" alt="" width="32" height="32">
+      <div>
+        <h1>Snap Companion settings</h1>
+        <p class="muted">Saved automatically. Captures stay on this device until you choose a destination.</p>
+      </div>
+    </header>
+    <p id="managed-note" class="managed-note" hidden>Some settings are managed by your organization and can't be changed here.</p>
+    <div class="tabs-layout">
+      <nav id="tabs" class="tabs" role="tablist" aria-label="Settings sections" aria-orientation="vertical"></nav>
+      <div class="panels">
+
+    <section id="tab-saving" class="panel" role="tabpanel" data-tab="saving" data-title="Saving">
+      <h2>Saving</h2>
+      <div class="cols">
+        <fieldset>
+          <legend>Default destinations — screenshots</legend>
+          <label class="check"><input type="checkbox" data-key="defaultScreenshotDestinations" data-value="download"> Download</label>
+          <label class="check"><input type="checkbox" data-key="defaultScreenshotDestinations" data-value="s3"> Amazon S3</label>
+        </fieldset>
+        <fieldset>
+          <legend>Default destinations — recordings</legend>
+          <label class="check"><input type="checkbox" data-key="defaultRecordingDestinations" data-value="download"> Download</label>
+          <label class="check"><input type="checkbox" data-key="defaultRecordingDestinations" data-value="s3"> Amazon S3</label>
+        </fieldset>
+      </div>
+      <p class="small muted">The ServiceNow record is always pre-selected when a capture starts from <code>/snap</code>.</p>
+      <label class="field"><span>Attach to ServiceNow by default as</span>
+        <select data-key="snDefaultFormat"><option value="pdf">PDF report</option><option value="png">PNG image</option></select>
+      </label>
+      <label class="field"><span>File name pattern</span>
+        <input type="text" data-key="fileNamePattern">
+        <small class="muted">Tokens: <code>{table}</code> <code>{label}</code> <code>{host}</code> <code>{title}</code> and date parts like <code>{yyyyMMdd-HHmmss}</code>. Preview: <code id="name-preview"></code></small>
+      </label>
+      <label class="field"><span>File name pattern outside ServiceNow</span>
+        <input type="text" data-key="fallbackFileNamePattern">
+      </label>
+      <label class="field"><span>Download subfolder</span><input type="text" data-key="downloadSubfolder"></label>
+      <label class="check"><input type="checkbox" data-key="askWhereToSave"> Ask where to save each download</label>
+      <label class="field"><span>PDF page size</span>
+        <select data-key="pdf.pageSize"><option value="letter">Letter</option><option value="a4">A4</option></select>
+      </label>
+      <label class="check"><input type="checkbox" data-key="redactionReminder"> Remind me to check for personal data before saving to S3 or ServiceNow when a screenshot has no redaction</label>
+    </section>
+
+    <section id="tab-fields" class="panel" role="tabpanel" data-tab="fields" data-title="Context fields">
+      <h2>Context fields</h2>
+      <p class="small muted">Extra fields shown in the editor's Context panel and included in PDF reports and sidecars. Required fields must be filled before saving to S3 or ServiceNow.</p>
+      <p id="cf-locked" class="small warn" hidden>Managed by your organization.</p>
+      <ul id="custom-fields" class="editable-list"></ul>
+      <button id="btn-add-field">＋ Add field</button>
+    </section>
+
+    <section id="tab-templates" class="panel" role="tabpanel" data-tab="templates" data-title="Templates">
+      <h2>Templates</h2>
+      <p class="small muted">Pick one from <strong>Template ▾</strong> in the editor to pre-fill the description, notes, steps and tags. Empty fields are filled; notes are appended; tags are added.</p>
+      <p id="tpl-locked" class="small warn" hidden>Managed by your organization.</p>
+      <ul id="templates" class="editable-list"></ul>
+      <button id="btn-add-template">＋ Add template</button>
+    </section>
+
+    <section id="tab-screenshots" class="panel" role="tabpanel" data-tab="screenshots" data-title="Screenshots">
+      <h2>Screenshots</h2>
+      <label class="field"><span>Full-page capture method</span>
+        <select data-key="fullPageStrategy" id="fullpage-strategy">
+          <option value="scroll">Scroll &amp; stitch (no extra permission)</option>
+          <option value="debugger">DevTools protocol (accurate; needs the "debugger" permission)</option>
+        </select>
+        <small class="muted">The DevTools method shows Chrome's "started debugging this browser" bar while it runs.</small>
+      </label>
+    </section>
+
+    <section id="tab-recording" class="panel" role="tabpanel" data-tab="recording" data-title="Recording">
+      <h2>Recording</h2>
+      <label class="field narrow"><span>Maximum length (minutes)</span><input type="number" min="1" max="120" data-key="recording.maxMinutes"></label>
+      <label class="check"><input type="checkbox" data-key="recording.mic"> Include microphone narration by default</label>
+      <div class="row">
+        <button id="btn-mic">Enable microphone</button>
+        <span id="mic-status" class="small muted"></span>
+      </div>
+      <p class="small muted">Chrome only lets extensions ask for the microphone from a visible page, so grant it once here.</p>
+      <label class="check"><input type="checkbox" data-key="recording.countdown"> 3-2-1 countdown before recording</label>
+      <label class="check"><input type="checkbox" data-key="recording.clickHighlights"> Highlight clicks while recording a tab</label>
+    </section>
+
+    <section id="tab-servicenow" class="panel" role="tabpanel" data-tab="servicenow" data-title="ServiceNow instances">
+      <h2>ServiceNow instances</h2>
+      <p class="small muted">Built in: <code>*.service-now.com</code>, <code>*.servicenowservices.com</code>. Add custom domains below. Chrome will ask for access to each one.</p>
+      <label class="check"><input type="checkbox" id="opt-allurls"> One-step <code>/snap</code> screenshots (no shortcut press needed)</label>
+      <p class="small muted">Chrome only lets an extension screenshot a tab without a click or shortcut if it can read every site (<code>&lt;all_urls&gt;</code>). Leave this off to keep access limited to ServiceNow; <code>/snap</code> will then ask you to press the shortcut.</p>
+      <ul id="hosts" class="hosts"></ul>
+      <form id="host-form" class="row">
+        <input type="text" id="host-input" placeholder="servicenow.example.com" aria-label="ServiceNow host">
+        <button type="submit">Add host</button>
+      </form>
+      <p class="small muted">SN Utils script command: copy <code>snutils/snap-command.js</code> from the extension folder into a new SN Utils slash command named <code>/snap</code>.</p>
+    </section>
+
+    <section id="tab-s3" class="panel" role="tabpanel" data-tab="s3" data-title="Amazon S3">
+      <h2>Amazon S3</h2>
+      <p class="small muted">Uploads use presigned URLs from your own service. No AWS credentials are stored in the extension.</p>
+      <label class="field"><span>Mode</span>
+        <select data-key="s3.mode"><option value="presign">Presigned URL service</option><option value="cognito">Cognito identity pool (not in this build)</option></select>
+      </label>
+      <label class="field"><span>Presign endpoint</span><input type="url" data-key="s3.presignEndpoint" placeholder="https://api.example.com/presign"></label>
+      <label class="field"><span>Key prefix (sent to the presign service)</span><input type="text" data-key="s3.keyPrefix" placeholder="captures/"></label>
+      <label class="field"><span>Authentication</span>
+        <select data-key="s3.auth" id="s3-auth"><option value="none">None / browser cookies</option><option value="oidc">OIDC sign-in (bearer token)</option></select>
+      </label>
+      <label class="field" id="oidc-row"><span>OIDC authorize URL</span>
+        <input type="url" data-key="s3.oidcAuthUrl" placeholder="https://idp.example.com/authorize?client_id=…&amp;response_type=token&amp;redirect_uri={redirect_uri}&amp;nonce={nonce}">
+        <small class="muted">Redirect URI to register: <code id="redirect-uri"></code></small>
+      </label>
+      <div class="row">
+        <button id="btn-s3-grant">Grant access to endpoint</button>
+        <span id="s3-status" class="small muted"></span>
+      </div>
+    </section>
+
+    <section id="tab-library" class="panel" role="tabpanel" data-tab="library" data-title="Library">
+      <h2>Library</h2>
+      <div class="cols">
+        <label class="field"><span>Keep at most (captures)</span><input type="number" min="1" max="500" data-key="library.maxItems"></label>
+        <label class="field"><span>Keep at most (MB)</span><input type="number" min="50" max="20000" data-key="library.maxMB"></label>
+      </div>
+      <p class="small muted">Oldest captures that were already saved somewhere are removed first. Unsaved captures are never removed automatically.</p>
+      <button id="btn-library">Open library</button>
+    </section>
+
+    <section id="tab-shortcuts" class="panel" role="tabpanel" data-tab="shortcuts" data-title="Keyboard shortcuts">
+      <h2>Keyboard shortcuts</h2>
+      <ul id="shortcuts" class="shortcuts"></ul>
+      <button id="btn-shortcuts">Change shortcuts</button>
+    </section>
+      </div>
+    </div>
+  </main>
+  <div id="toast" class="toast" role="status"></div>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

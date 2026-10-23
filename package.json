@@ -1,0 +1,13 @@
+{
+  "name": "snap-companion",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chrome MV3 extension: screenshots and recordings with annotation, saved to disk, S3, or ServiceNow.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/",
+    "icons": "node scripts/make-icons.mjs",
+    "zip": "zip -r snap-companion.zip manifest.json managed_schema.json icons src snutils -x '*.DS_Store'",
+    "test:e2e": "node tests/e2e/e2e.mjs"
+  }
+}

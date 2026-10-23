@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Snap Companion</title>
+  <link rel="stylesheet" href="../ui/common.css">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="../../icons/32.png" alt="" width="20" height="20">
+    <h1>Snap Companion</h1>
+  </header>
+
+  <div id="error" class="banner error-banner" hidden></div>
+  <div id="restricted" class="banner" hidden>Chrome doesn't allow capturing this page. Window/screen recording still works.</div>
+
+  <section id="pending" class="banner pending" hidden>
+    <div><strong>ServiceNow request waiting</strong><br><span id="pending-text" class="small"></span></div>
+    <button id="btn-pending" class="primary">Continue</button>
+  </section>
+
+  <section id="recording" class="recording" hidden>
+    <div class="rec-status"><span class="dot"></span><span id="rec-label">Recording</span> <strong id="rec-time">00:00</strong></div>
+    <div class="rec-actions">
+      <button id="btn-pause">Pause</button>
+      <button id="btn-resume" hidden>Resume</button>
+      <button id="btn-stop" class="primary">Stop</button>
+    </div>
+  </section>
+
+  <section id="actions">
+    <div class="row-head">
+      <h2>Screenshot</h2>
+      <div class="delay" role="radiogroup" aria-label="Capture delay">
+        <span class="muted small">Delay</span>
+        <button role="radio" data-delay="0">Off</button>
+        <button role="radio" data-delay="3">3s</button>
+        <button role="radio" data-delay="5">5s</button>
+        <button role="radio" data-delay="10">10s</button>
+      </div>
+    </div>
+    <div class="grid">
+      <button data-capture="visible" class="tile"><span class="ico">▣</span>Visible<kbd data-cmd="snap-visible"></kbd></button>
+      <button data-capture="region" class="tile"><span class="ico">⬚</span>Region<kbd data-cmd="snap-region"></kbd></button>
+      <button data-capture="fullpage" class="tile"><span class="ico">⇣</span>Full page</button>
+    </div>
+    <h2>Record</h2>
+    <div class="grid two">
+      <button id="btn-rec-tab" class="tile"><span class="ico rec">●</span>This tab<kbd data-cmd="record-toggle"></kbd></button>
+      <button id="btn-rec-window" class="tile"><span class="ico">▭</span>Window / screen</button>
+    </div>
+    <p id="quota" class="small error" hidden>Storage is full — clear the library to record again.</p>
+  </section>
+
+  <section>
+    <div class="row-head"><h2>Recent</h2><button id="btn-library" class="ghost small">Library →</button></div>
+    <ul id="recent" class="recent"></ul>
+    <p id="recent-empty" class="muted small" hidden>No captures yet.</p>
+  </section>
+
+  <footer>
+    <button id="btn-options" class="ghost small">Settings</button>
+    <button id="btn-shortcuts" class="ghost small">Shortcuts</button>
+  </footer>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Snap Companion — Recorder</title>
+  <link rel="stylesheet" href="../ui/common.css">
+  <link rel="stylesheet" href="recorder.css">
+</head>
+<body>
+  <main>
+    <section id="setup">
+      <h1>Record a window or screen</h1>
+      <p class="muted">Chrome will ask which window, tab or screen to share. Keep this window open while recording — you can minimise it.</p>
+      <p id="sn-context" class="chip" hidden></p>
+      <label class="check"><input type="checkbox" id="opt-mic"> Include microphone narration</label>
+      <label class="check"><input type="checkbox" id="opt-countdown"> 3-2-1 countdown</label>
+      <p id="mic-hint" class="small muted" hidden>Grant microphone access once from <a href="#" id="link-options">Options → Recording</a>.</p>
+      <button id="btn-start" class="primary big">Choose what to share…</button>
+      <p id="error" class="error small" hidden></p>
+    </section>
+
+    <section id="countdown" hidden><div id="count" class="count">3</div></section>
+
+    <section id="live" hidden>
+      <div class="status"><span class="dot"></span><span id="state-label">Recording</span><strong id="elapsed">00:00</strong></div>
+      <p id="max" class="small muted"></p>
+      <p id="warnings" class="small warn" hidden></p>
+      <div class="actions">
+        <button id="btn-pause">Pause</button>
+        <button id="btn-resume" hidden>Resume</button>
+        <button id="btn-stop" class="primary">Stop &amp; edit</button>
+      </div>
+    </section>
+
+    <section id="finishing" hidden>
+      <p>Saving recording…</p>
+    </section>
+  </main>
+  <script type="module" src="recorder.js"></script>
+</body>
+</html>

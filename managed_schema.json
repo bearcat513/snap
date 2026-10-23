@@ -1,0 +1,59 @@
+{
+  "type": "object",
+  "properties": {
+    "s3": {
+      "title": "S3 storage",
+      "description": "S3 upload configuration. Presign mode is the only mode supported by this build.",
+      "type": "object",
+      "properties": {
+        "mode": { "type": "string", "enum": ["presign", "cognito"] },
+        "presignEndpoint": { "type": "string", "description": "Full URL the extension POSTs presign requests to, e.g. https://api.example.com/presign" },
+        "auth": { "type": "string", "enum": ["none", "oidc"], "description": "How the extension authenticates to the presign endpoint" },
+        "oidcAuthUrl": { "type": "string", "description": "OIDC authorize URL (implicit flow). {redirect_uri} and {nonce} are substituted." },
+        "cognito": { "type": "object" },
+        "keyPrefix": { "type": "string" }
+      }
+    },
+    "snHosts": {
+      "title": "Extra ServiceNow hosts",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "allowedDestinations": {
+      "title": "Allowed destinations",
+      "type": "array",
+      "items": { "type": "string", "enum": ["download", "s3", "servicenow"] }
+    },
+    "forceRedactionReminder": { "type": "boolean" },
+    "customFields": {
+      "title": "Extra context fields",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "type": { "type": "string", "enum": ["text", "textarea", "select"] },
+          "options": { "type": "array", "items": { "type": "string" } },
+          "required": { "type": "boolean" }
+        }
+      }
+    },
+    "templates": {
+      "title": "Context templates",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "notes": { "type": "string" },
+          "steps": { "type": "array", "items": { "type": "string" } },
+          "tags": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "recordingMaxMinutes": { "type": "integer" }
+  }
+}

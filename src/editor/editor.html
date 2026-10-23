@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Snap Companion</title>
+  <link rel="icon" href="../../icons/32.png">
+  <link rel="stylesheet" href="../ui/common.css">
+  <link rel="stylesheet" href="editor.css">
+</head>
+<body>
+  <!-- ============ Editor ============ -->
+  <div id="editor-view" hidden>
+    <header class="topbar">
+      <button id="btn-library" class="ghost">◀ Library</button>
+      <input id="title" class="title-input" type="text" placeholder="Untitled capture" aria-label="Capture title">
+      <div class="spacer"></div>
+      <span id="save-status" class="muted small" aria-live="polite"></span>
+      <div class="menu">
+        <button id="btn-export" aria-haspopup="true" aria-expanded="false">Export ▾</button>
+        <div id="export-menu" class="menu-list" role="menu" hidden>
+          <button role="menuitem" data-export="png" data-kind="screenshot">Download PNG</button>
+          <button role="menuitem" data-export="clipboard" data-kind="screenshot">Copy image</button>
+          <button role="menuitem" data-export="video" data-kind="recording">Download video</button>
+          <button role="menuitem" data-export="pdf">Download PDF report</button>
+          <button role="menuitem" data-export="sidecar">Download .md + .json</button>
+        </div>
+      </div>
+      <button id="btn-save" class="primary">Save</button>
+    </header>
+
+    <div id="warnings" class="warn-banner" hidden></div>
+
+    <main class="layout">
+      <aside id="tools" class="tools" aria-label="Annotation tools">
+        <div class="tool-group">
+          <button data-tool="select" title="Select / move (V)">⬉<span>Select</span></button>
+          <button data-tool="crop" title="Crop (C)">⛶<span>Crop</span></button>
+          <button data-tool="arrow" title="Arrow (A)">↗<span>Arrow</span></button>
+          <button data-tool="rect" title="Rectangle (R)">▭<span>Box</span></button>
+          <button data-tool="ellipse" title="Ellipse (E)">◯<span>Ellipse</span></button>
+          <button data-tool="text" title="Text (T)">T<span>Text</span></button>
+          <button data-tool="highlight" title="Highlighter (H)">▮<span>Highlight</span></button>
+          <button data-tool="step" title="Step marker (N)">①<span>Step</span></button>
+          <button data-tool="blur" title="Blur / pixelate (B)">▒<span>Redact</span></button>
+        </div>
+        <div class="tool-group swatches" aria-label="Color">
+          <button data-color="#e5484d" title="Red" style="--c:#e5484d"></button>
+          <button data-color="#f76b15" title="Orange" style="--c:#f76b15"></button>
+          <button data-color="#ffd60a" title="Yellow" style="--c:#ffd60a"></button>
+          <button data-color="#30a46c" title="Green" style="--c:#30a46c"></button>
+          <button data-color="#2563eb" title="Blue" style="--c:#2563eb"></button>
+          <button data-color="#111111" title="Black" style="--c:#111111"></button>
+          <button data-color="#ffffff" title="White" style="--c:#ffffff"></button>
+        </div>
+        <div class="tool-group widths" aria-label="Stroke width">
+          <button data-width="2" title="Thin"><i style="height:2px"></i></button>
+          <button data-width="4" title="Medium"><i style="height:4px"></i></button>
+          <button data-width="8" title="Thick"><i style="height:7px"></i></button>
+        </div>
+        <div class="tool-group blur-modes" aria-label="Redaction style">
+          <button data-blur="pixelate" title="Pixelate">▦<span>Pixelate</span></button>
+          <button data-blur="blur" title="Blur">◌<span>Blur</span></button>
+        </div>
+        <div class="tool-group">
+          <button id="btn-undo" title="Undo (Ctrl+Z)">↶<span>Undo</span></button>
+          <button id="btn-redo" title="Redo (Ctrl+Shift+Z)">↷<span>Redo</span></button>
+          <button id="btn-delete" title="Delete selected (Del)">🗑<span>Delete</span></button>
+          <button id="btn-clear-crop" title="Remove crop">⛶<span>Uncrop</span></button>
+          <button id="btn-zoom" title="Toggle fit / actual size">⤢<span>Fit</span></button>
+        </div>
+      </aside>
+
+      <section class="stage" id="stage">
+        <div class="canvas-wrap" id="canvas-wrap" hidden>
+          <canvas id="canvas" aria-label="Screenshot editor"></canvas>
+          <textarea id="text-input" class="text-input" hidden rows="1" aria-label="Annotation text"></textarea>
+        </div>
+        <div class="video-wrap" id="video-wrap" hidden>
+          <div class="video-box" id="video-box">
+            <video id="video" controls preload="auto"></video>
+            <canvas id="video-overlay" class="video-overlay" aria-label="Redaction regions"></canvas>
+          </div>
+          <div class="timeline" id="timeline" tabindex="0" role="slider" aria-label="Timeline">
+            <div class="tl-track"></div>
+            <div class="tl-range" id="tl-range"></div>
+            <div class="tl-redactions" id="tl-redactions"></div>
+            <div class="tl-keys" id="tl-keys"></div>
+            <div class="tl-head" id="tl-head"></div>
+            <span class="tl-handle" id="tl-in" title="Drag to set the start"></span>
+            <span class="tl-handle" id="tl-out" title="Drag to set the end"></span>
+          </div>
+          <div class="video-toolbar">
+            <span id="time-label" class="mono small"></span>
+            <span class="sep"></span>
+            <button id="btn-set-in" title="Start the export at the current time">⇤ Set start</button>
+            <button id="btn-set-out" title="End the export at the current time">Set end ⇥</button>
+            <button id="btn-clear-trim">Clear trim</button>
+            <span class="sep"></span>
+            <button id="btn-add-key" title="Add the current frame to the PDF report">＋ Keyframe</button>
+            <button id="btn-auto-keys" title="Pick 4 evenly spaced keyframes">Auto keyframes</button>
+            <span class="sep"></span>
+            <button id="btn-redact-video" aria-pressed="false" title="Draw regions to pixelate/blur from the current time">▒ Redact region</button>
+            <select id="video-blur-mode" aria-label="New region style"><option value="pixelate">Pixelate</option><option value="blur">Blur</option></select>
+          </div>
+          <p class="small muted"><span id="trim-label"></span> · <span id="video-meta"></span></p>
+          <div class="video-panels">
+            <section class="video-panel">
+              <h2>Keyframes <span class="muted small">(PDF report)</span></h2>
+              <ul id="keyframes" class="keyframes"></ul>
+              <p id="keyframes-empty" class="muted small">None picked: the PDF uses the first frame of the exported range.</p>
+            </section>
+            <section class="video-panel">
+              <h2>Redactions</h2>
+              <ul id="video-redactions" class="vredactions"></ul>
+              <p id="redactions-empty" class="muted small">Turn on “Redact region” and drag over the video. A region runs from the current time to the end; adjust with Start/End = now.</p>
+            </section>
+          </div>
+        </div>
+        <div id="loading" class="muted">Loading…</div>
+      </section>
+
+      <aside class="sidebar">
+        <section>
+          <div class="section-head">
+            <h2>Context</h2>
+            <div class="menu">
+              <button id="btn-template" class="small" aria-haspopup="true">Template ▾</button>
+              <div id="template-menu" class="menu-list" role="menu" hidden></div>
+            </div>
+          </div>
+          <label class="field"><span>Record URL</span><input id="ctx-recordUrl" type="url" placeholder="https://…"></label>
+          <label class="field"><span>Description <em id="desc-required" class="muted small" hidden>(required for ServiceNow)</em></span>
+            <input id="ctx-description" type="text" placeholder="One line: what's wrong / what this shows"></label>
+          <div class="field">
+            <span class="field-label">Steps to reproduce</span>
+            <ol id="steps" class="steps"></ol>
+            <button id="btn-add-step" class="small">＋ Add step</button>
+          </div>
+          <label class="field"><span>Notes</span><textarea id="ctx-notes" rows="4" placeholder="Expected vs actual, anything else"></textarea></label>
+          <div id="custom-fields"></div>
+          <div class="field">
+            <label for="tag-input" class="field-label">Tags</label>
+            <div class="tag-box"><span id="tags" class="tags"></span><input id="tag-input" type="text" list="tag-suggestions" placeholder="Add tag…"></div>
+            <datalist id="tag-suggestions"></datalist>
+          </div>
+        </section>
+        <section>
+          <h2>Environment</h2>
+          <dl id="env" class="env"></dl>
+        </section>
+        <section>
+          <h2>Destinations</h2>
+          <div id="destinations" class="destinations"></div>
+        </section>
+        <section id="saves-section" hidden>
+          <h2>Saved to</h2>
+          <ul id="saves" class="saves"></ul>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <!-- ============ Library ============ -->
+  <main id="library-view" class="library" hidden></main>
+
+  <dialog id="confirm-dialog">
+    <form method="dialog">
+      <h3></h3>
+      <p></p>
+      <menu>
+        <button value="cancel"></button>
+        <button value="ok" class="primary"></button>
+      </menu>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status"></div>
+  <script type="module" src="editor.js"></script>
+</body>
+</html>
