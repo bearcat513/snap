@@ -6,7 +6,7 @@
 
   const NS = 'snap-companion';
   const V = 1;
-  const MODES = ['screenshot', 'region', 'fullpage', 'record-tab', 'record-window'];
+  const MODES = ['screenshot', 'region', 'element', 'fullpage', 'session', 'record-tab', 'record-window'];
   const FORMATS = ['png', 'pdf', 'video'];
   const PAGE_TYPES = ['snap:request', 'snap:uploaded', 'snap:cancelled'];
   const EXT_TYPES = ['snap:accepted', 'snap:rejected', 'snap:file', 'snap:cancelled', 'snap:error'];
@@ -41,6 +41,8 @@
     if (!isStr(c.sysId, 32) || !/^[0-9a-f]{32}$/.test(c.sysId)) return { ok: false, error: 'Invalid sysId' };
     if (c.label !== undefined && !isStr(c.label, 120)) return { ok: false, error: 'Invalid label' };
     if (c.user !== undefined && !isStr(c.user, 120)) return { ok: false, error: 'Invalid user' };
+    const limits = validateLimits(c.limits);
+    if (!limits) return { ok: false, error: 'Invalid attachment limits' };
     let recordUrl = loc.origin + '/' + c.table + '.do?sys_id=' + c.sysId;
     if (c.recordUrl !== undefined) {
       if (!isStr(c.recordUrl, 2048) || c.recordUrl.indexOf(loc.origin + '/') !== 0) {
@@ -55,10 +57,27 @@
         deliver,
         context: {
           instance: c.instance, table: c.table, sysId: c.sysId,
-          label: c.label || c.sysId, recordUrl, user: c.user || '',
+          label: c.label || c.sysId, recordUrl, user: c.user || '', limits,
         },
       },
     };
+  }
+
+  /** Instance attachment limits read by /snap: { maxBytes?, allowedExtensions? }; null if malformed. */
+  function validateLimits(l) {
+    if (l === undefined || l === null) return {};
+    if (typeof l !== 'object' || Array.isArray(l)) return null;
+    const out = {};
+    if (l.maxBytes !== undefined) {
+      if (!Number.isSafeInteger(l.maxBytes) || l.maxBytes <= 0) return null;
+      out.maxBytes = l.maxBytes;
+    }
+    if (l.allowedExtensions !== undefined) {
+      if (!Array.isArray(l.allowedExtensions) || l.allowedExtensions.length > 200) return null;
+      if (l.allowedExtensions.some((x) => typeof x !== 'string' || !/^[a-z0-9]{1,16}$/.test(x))) return null;
+      if (l.allowedExtensions.length) out.allowedExtensions = [...new Set(l.allowedExtensions)];
+    }
+    return out;
   }
 
   function validateUploadedPayload(p) {
@@ -99,6 +118,6 @@
 
   root.SnapProtocol = {
     NS, V, MODES, FORMATS, PAGE_TYPES, EXT_TYPES,
-    isEnvelope, envelope, validateRequestPayload, validateUploadedPayload, validatePageMessage,
+    isEnvelope, envelope, validateRequestPayload, validateUploadedPayload, validatePageMessage, validateLimits,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

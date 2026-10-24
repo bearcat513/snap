@@ -2,6 +2,7 @@
 // hands the files to the service worker → content script → bridge iframe, then waits for results.
 
 import { destinationAllowed } from '../shared/settings.js';
+import { attachmentProblem, workNoteText } from '../shared/sn.js';
 
 const RESULT_TIMEOUT = 5 * 60_000;
 
@@ -40,20 +41,29 @@ export const servicenowAdapter = {
   /** One bridge request is single-use, so every file for the record goes in one hand-off. */
   async saveAll(files, ctx) {
     const jobId = ctx.capture.jobId;
+    // Check the instance's attachment limits (read by /snap) before handing anything over.
+    const limits = ctx.capture.servicenow?.limits;
+    const rejected = files.map((f) => ({ f, error: attachmentProblem(f, limits) })).filter((x) => x.error)
+      .map(({ f, error }) => ({ adapter: 'servicenow', ok: false, name: f.name, error }));
+    files = files.filter((f) => !attachmentProblem(f, limits));
+    if (!files.length) return rejected;
+    const note = ctx.settings['servicenow.workNote'] ? workNoteText({ capture: ctx.capture, files, links: ctx.links }) : '';
     const resultPromise = waitForResult(jobId);
     const res = await chrome.runtime.sendMessage({
       type: 'bridge.deliver',
       jobId,
+      note,
       files: files.map(({ name, mimeType, blobId, size }) => ({ name, mimeType, blobId, size })),
     });
     if (!res || !res.ok) {
-      return files.map((f) => ({ adapter: 'servicenow', ok: false, name: f.name, error: res?.error || 'Delivery failed' }));
+      return [...rejected, ...files.map((f) => ({ adapter: 'servicenow', ok: false, name: f.name, error: res?.error || 'Delivery failed' }))];
     }
     const saves = await resultPromise;
     if (!saves) {
-      return files.map((f) => ({ adapter: 'servicenow', ok: false, name: f.name, error: 'No response from the ServiceNow page (timed out).' }));
+      const error = 'No response from the ServiceNow page (timed out). Keep the record open and retry; if you reloaded it, run /snap again.';
+      return [...rejected, ...files.map((f) => ({ adapter: 'servicenow', ok: false, name: f.name, error }))];
     }
     // The service worker already recorded these on the capture.
-    return saves.map((s) => ({ ...s, persisted: true }));
+    return [...rejected, ...saves.map((s) => ({ ...s, persisted: true }))];
   },
 };

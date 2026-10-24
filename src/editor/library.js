@@ -8,17 +8,22 @@ import { getSettings } from '../shared/settings.js';
 import { formatBytes, formatDuration } from '../shared/util.js';
 import { ExportFactory, exportedDurationMs } from './export/files.js';
 import { needsRender, renderKey } from './video-tools.js';
-import { getAdapter } from '../storage/adapter.js';
+import { getAdapter, SAVE_ORDER, requestPlanOrigins } from '../storage/adapter.js';
+import { pendingFailures, retryPlan, toSaveRecord } from '../shared/saves.js';
+import { logError } from '../shared/diagnostics.js';
+import { runSavePlan } from './save-runner.js';
+import { createComparison } from './compare.js';
 import { toast, confirmDialog, el } from './ui.js';
 
 const urls = [];
 const FILTER_KEY = 'snap.libraryFilter';
+const DEST_NAMES = { servicenow: 'ServiceNow', s3: 'S3', download: 'Downloaded', webhook: 'Webhook', jira: 'Jira', github: 'GitHub' };
 
 function loadFilter() {
   try {
-    return { q: '', kind: 'all', unsaved: false, tag: '', ...JSON.parse(localStorage.getItem(FILTER_KEY) || '{}') };
+    return { q: '', kind: 'all', unsaved: false, failed: false, tag: '', ...JSON.parse(localStorage.getItem(FILTER_KEY) || '{}') };
   } catch {
-    return { q: '', kind: 'all', unsaved: false, tag: '' };
+    return { q: '', kind: 'all', unsaved: false, failed: false, tag: '' };
   }
 }
 function saveFilter(f) {
@@ -31,13 +36,14 @@ export function searchText(c) {
   return [
     c.title, ctx.description, ctx.notes, ctx.recordUrl, ...(ctx.steps || []), ...(ctx.tags || []),
     ...Object.values(ctx.custom || {}), c.servicenow?.label, c.servicenow?.table, c.servicenow?.instance,
-    c.source?.url, c.source?.title,
+    c.source?.url, c.source?.title, ...(c.captions || []).map((cue) => cue.text),
   ].filter(Boolean).join(' \n ').toLowerCase();
 }
 
 export function matches(c, f) {
   if (f.kind !== 'all' && c.kind !== f.kind) return false;
   if (f.unsaved && (c.saves || []).some((s) => s.ok)) return false;
+  if (f.failed && !pendingFailures(c).length) return false;
   if (f.tag && !(c.context?.tags || []).includes(f.tag)) return false;
   const words = f.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return true;
@@ -73,6 +79,57 @@ async function quickExport(capture, format, settings) {
   toast(failed ? `Export failed: ${failed.error}` : `Downloaded ${results.map((r) => r.name).join(', ')}`);
 }
 
+const snContextOf = (c) => (c.servicenow
+  ? { instance: c.servicenow.instance, table: c.servicenow.table, sysId: c.servicenow.sysId, label: c.servicenow.label }
+  : undefined);
+
+/** Redo the saves whose latest attempt failed. Call straight from a click (S3 may prompt for access). */
+async function retryFailed(capture, settings) {
+  const plan = retryPlan(capture, SAVE_ORDER);
+  // No await before this: the permission prompt needs the click's user gesture.
+  const granted = requestPlanOrigins(plan, settings).then((r) => r.ok);
+  const ctx = () => ({ settings, capture, snContext: snContextOf(capture) });
+  const ready = [];
+  const skipped = [];
+  for (const step of plan) {
+    let av = await getAdapter(step.id).isAvailable(ctx()).catch((err) => ({ available: false, reason: err.message }));
+    if (av.available && getAdapter(step.id).permissionOrigin?.(settings) && !(await granted)) av = { available: false, reason: 'Access was not granted.' };
+    if (av.available) ready.push(step);
+    else skipped.push(`${getAdapter(step.id).label}: ${av.reason}${step.id === 'servicenow' ? ' Keep the record open in its tab, or run /snap again.' : ''}`);
+  }
+  if (!ready.length) { toast(skipped.join(' ') || 'Nothing to retry.', 8000); return; }
+  toast('Retrying…', 60_000);
+  const factory = new ExportFactory({ capture, settings, onProgress: (msg) => toast(msg, 60_000) });
+  const results = await runSavePlan({ plan: ready, factory, ctx, onStatus: (msg) => toast(msg, 60_000) });
+  const mine = results.filter((r) => !r.persisted).map(toSaveRecord);
+  await updateCapture(capture.id, (c) => { c.saves = [...(c.saves || []), ...mine]; });
+  const failed = results.filter((r) => !r.ok);
+  for (const r of failed) logError(`retry:${r.adapter}`, r.error || 'Save failed', { file: r.name });
+  toast([failed.length ? `${failed.length} of ${results.length} still failing: ${failed[0].error}` : `Retried ${results.length} file${results.length === 1 ? '' : 's'}.`, ...skipped].join(' '), 8000);
+}
+
+/** Storage meter (§5.7): library size against Settings → Library and the browser's own quota. */
+async function storageMeter(captures, total, settings) {
+  const maxBytes = settings['library.maxMB'] * 1024 * 1024;
+  const est = await navigator.storage?.estimate?.().catch(() => null);
+  const pct = Math.min(100, (100 * total) / maxBytes);
+  const unsaved = captures.filter((c) => !(c.saves || []).some((s) => s.ok));
+  const over = total > maxBytes || captures.length > settings['library.maxItems'];
+  const bar = el('div', { class: `meter${over ? ' over' : pct > 80 ? ' near' : ''}`, role: 'meter', 'aria-valuemin': '0', 'aria-valuemax': String(maxBytes), 'aria-valuenow': String(total), 'aria-label': 'Library storage used' },
+    el('span', { style: `width:${pct}%` }));
+  const lines = [`${formatBytes(total)} of ${formatBytes(maxBytes)} library limit · ${captures.length} of ${settings['library.maxItems']} captures`];
+  if (est?.quota) lines.push(`browser storage: ${formatBytes(est.usage)} used of ${formatBytes(est.quota)} available to the extension`);
+  let warning = null;
+  if (over && unsaved.length) {
+    warning = el('p', { class: 'small warn-text', text: `Over the limit. ${unsaved.length} capture${unsaved.length === 1 ? ' has' : 's have'} never been saved, so ${unsaved.length === 1 ? 'it is' : 'they are'} kept: save or delete ${unsaved.length === 1 ? 'it' : 'them'} to free space.` });
+  } else if (pct > 80 && unsaved.length) {
+    warning = el('p', { class: 'small warn-text', text: `Nearly full. Saved captures are removed oldest first; the ${unsaved.length} unsaved one${unsaved.length === 1 ? ' is' : 's are'} never removed automatically.` });
+  }
+  return el('section', { class: 'storage' }, bar, el('p', { class: 'small muted', text: lines.join(' · ') }), warning);
+}
+
+const compare = { on: false, picked: [] }; // before/after selection mode
+
 export async function renderLibrary(root, { onOpen }) {
   urls.splice(0).forEach((u) => URL.revokeObjectURL(u));
   root.replaceChildren();
@@ -83,10 +140,18 @@ export async function renderLibrary(root, { onOpen }) {
   const filter = loadFilter();
   const rerender = () => renderLibrary(root, { onOpen });
 
+  const failing = captures.filter((c) => pendingFailures(c).length).length;
   root.append(el('header', { class: 'lib-head' },
     el('h1', { text: 'Library' }),
-    el('span', { class: 'muted', text: `${captures.length} capture${captures.length === 1 ? '' : 's'} · ${formatBytes(total)} · stored only on this device` }),
+    el('span', { class: 'muted', text: `${captures.length} capture${captures.length === 1 ? '' : 's'} · stored only on this device${failing ? ` · ${failing} with failed saves` : ''}` }),
     el('div', { class: 'spacer' }),
+    el('button', {
+      id: 'btn-compare',
+      'aria-pressed': String(compare.on),
+      title: 'Pick two screenshots to show side by side',
+      disabled: captures.filter((c) => c.kind === 'screenshot').length < 2,
+      onclick: () => { compare.on = !compare.on; compare.picked = []; rerender(); },
+    }, compare.on ? 'Cancel compare' : 'Compare…'),
     el('button', {
       class: 'danger',
       disabled: !captures.length,
@@ -99,6 +164,8 @@ export async function renderLibrary(root, { onOpen }) {
       },
     }, 'Clear library'),
   ));
+
+  if (captures.length) root.append(await storageMeter(captures, total, settings));
 
   const recover = await recoverableJobs();
   if (recover.length) {
@@ -144,11 +211,14 @@ export async function renderLibrary(root, { onOpen }) {
   // ---- filters ----
   const allTags = [...new Set(captures.flatMap((c) => c.context?.tags || []))].sort();
   if (filter.tag && !allTags.includes(filter.tag)) filter.tag = '';
+  if (!failing) filter.failed = false; // its checkbox is only shown while something is failing
   const search = el('input', { type: 'search', id: 'lib-search', placeholder: 'Search title, description, notes, steps, tags, record…', value: filter.q, 'aria-label': 'Search captures' });
   const kind = el('select', { id: 'lib-kind', 'aria-label': 'Kind' },
-    el('option', { value: 'all', text: 'All kinds' }), el('option', { value: 'screenshot', text: 'Screenshots' }), el('option', { value: 'recording', text: 'Recordings' }));
+    el('option', { value: 'all', text: 'All kinds' }), el('option', { value: 'screenshot', text: 'Screenshots' }), el('option', { value: 'recording', text: 'Recordings' }),
+    el('option', { value: 'session', text: 'Sessions' }));
   kind.value = filter.kind;
   const unsaved = el('input', { type: 'checkbox', id: 'lib-unsaved', checked: filter.unsaved });
+  const failedOnly = el('input', { type: 'checkbox', id: 'lib-failed', checked: filter.failed });
   const tagBar = el('div', { class: 'tag-filter' });
   const renderTagBar = () => {
     tagBar.replaceChildren(...allTags.map((t) => el('button', {
@@ -160,9 +230,32 @@ export async function renderLibrary(root, { onOpen }) {
   renderTagBar();
   const count = el('span', { class: 'muted small', id: 'lib-count' });
   root.append(el('div', { class: 'lib-filters' },
-    search, kind, el('label', { class: 'check' }, unsaved, 'Not saved anywhere'), count), allTags.length ? tagBar : null);
+    search, kind, el('label', { class: 'check' }, unsaved, 'Not saved anywhere'),
+    failing ? el('label', { class: 'check' }, failedOnly, `Failed saves (${failing})`) : null, count), allTags.length ? tagBar : null);
+
+  if (compare.on) {
+    const n = compare.picked.length;
+    const make = (layout) => async () => {
+      try {
+        const [a, b] = compare.picked.map((id) => captures.find((c) => c.id === id));
+        const capture = await createComparison(a, b, layout);
+        compare.on = false;
+        compare.picked = [];
+        await chrome.runtime.sendMessage({ type: 'library:changed' }).catch(() => {});
+        onOpen(capture.id);
+      } catch (err) {
+        toast(`Compare failed: ${err.message}`);
+      }
+    };
+    root.append(el('div', { class: 'compare-bar', role: 'status' },
+      el('span', { text: n < 2 ? `Pick ${2 - n} more screenshot${n === 1 ? '' : 's'} to compare. The older one is “Before”.` : 'Ready to compare.' }),
+      el('span', { class: 'spacer' }),
+      el('button', { disabled: n < 2, onclick: make('side') }, 'Side by side'),
+      el('button', { disabled: n < 2, onclick: make('stacked') }, 'Stacked')));
+  }
 
   // ---- cards ----
+  const byId = new Map(captures.map((c) => [c.id, c]));
   const grid = el('ul', { class: 'lib-grid' });
   const cards = [];
   for (const c of captures) {
@@ -173,16 +266,23 @@ export async function renderLibrary(root, { onOpen }) {
       urls.push(u);
       media = el('img', { src: u, alt: '' });
     } else {
-      media = el('div', { class: 'ph', text: c.kind === 'recording' ? '▶' : '▣' });
+      media = el('div', { class: 'ph', text: c.kind === 'recording' ? '▶' : c.kind === 'session' ? '❐' : '▣' });
     }
     const okSaves = (c.saves || []).filter((s) => s.ok);
+    const failures = pendingFailures(c);
     const where = [...new Set(okSaves.map((s) => s.adapter))];
-    const formats = c.kind === 'screenshot' ? [['png', 'PNG'], ['pdf', 'PDF report']] : [['video', 'Video'], ['pdf', 'PDF report'], ['sidecar', '.md + .json']];
+    const formats = c.kind === 'screenshot' ? [['png', 'PNG'], ['pdf', 'PDF report'], ['sidecar', '.md + .json']]
+      : c.kind === 'session' ? [['pdf', 'PDF report'], ['sidecar', '.md + .json']]
+        : [['video', 'Video'], ['gif', 'GIF'], ['pdf', 'PDF report'], ['sidecar', '.md + .json']];
     const menu = el('div', { class: 'menu-list card-menu', role: 'menu', hidden: true },
       ...formats.map(([f, label]) => el('button', {
         role: 'menuitem',
         onclick: async (e) => { e.stopPropagation(); menu.hidden = true; await quickExport(c, f, settings); rerender(); },
       }, `Download ${label}`)),
+      failures.length ? el('button', {
+        role: 'menuitem',
+        onclick: async (e) => { e.stopPropagation(); menu.hidden = true; await retryFailed(c, settings); rerender(); },
+      }, `Retry failed saves (${failures.length})`) : null,
       el('button', { role: 'menuitem', onclick: () => onOpen(c.id) }, 'Open in editor'),
       el('button', {
         role: 'menuitem',
@@ -200,15 +300,27 @@ export async function renderLibrary(root, { onOpen }) {
         },
       }, 'Delete'));
     const durationMs = c.kind === 'recording' && c.source?.durationMs ? exportedDurationMs(c) : 0;
-    const card = el('li', { class: 'card', 'data-id': c.id },
-      el('button', { class: 'card-open', onclick: () => onOpen(c.id), title: 'Open in editor' },
-        el('div', { class: 'thumb' }, media, c.kind === 'recording' ? el('span', { class: 'badge', text: durationMs ? formatDuration(durationMs) : 'Video' }) : null),
+    const pickable = compare.on && c.kind === 'screenshot';
+    const picked = compare.picked.includes(c.id);
+    const open = () => {
+      if (!compare.on) { onOpen(c.id); return; }
+      if (!pickable) return;
+      compare.picked = picked ? compare.picked.filter((x) => x !== c.id) : [...compare.picked, c.id].slice(-2);
+      rerender();
+    };
+    const card = el('li', { class: `card${picked ? ' picked' : ''}${compare.on && !pickable ? ' dim' : ''}`, 'data-id': c.id },
+      el('button', { class: 'card-open', onclick: open, title: compare.on ? (pickable ? 'Pick for comparison' : 'Only screenshots can be compared') : 'Open in editor', 'aria-pressed': compare.on ? String(picked) : null },
+        el('div', { class: 'thumb' }, media,
+          c.kind === 'recording' ? el('span', { class: 'badge', text: durationMs ? formatDuration(durationMs) : 'Video' }) : null,
+          c.kind === 'session' ? el('span', { class: 'badge', text: `${(c.members || []).length} captures` }) : null),
         el('div', { class: 'card-body' },
           el('div', { class: 'card-title', text: c.title }),
           el('div', { class: 'muted small', text: [new Date(c.createdAt).toLocaleString(), c.context?.description].filter(Boolean).join(' · ') }),
           el('div', { class: 'chips' },
-            where.length ? where.map((w) => el('span', { class: 'chip', text: w === 'servicenow' ? 'ServiceNow' : w === 's3' ? 'S3' : 'Downloaded' }))
+            where.length ? where.map((w) => el('span', { class: 'chip', text: DEST_NAMES[w] || w }))
               : el('span', { class: 'chip warn', text: 'Not saved anywhere' }),
+            c.sessionId && byId.has(c.sessionId) ? el('span', { class: 'chip', title: byId.get(c.sessionId).title, text: 'In session' }) : null,
+            failures.length ? el('span', { class: 'chip fail', title: failures.map((f) => `${DEST_NAMES[f.adapter] || f.adapter}: ${f.error}`).join('\n'), text: 'Save failed' }) : null,
             (c.context?.tags || []).map((t) => el('span', { class: 'chip tag-chip', text: `#${t}` }))),
         )),
       el('div', { class: 'menu card-actions' },
@@ -244,5 +356,6 @@ export async function renderLibrary(root, { onOpen }) {
   search.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { filter.q = search.value; apply(); }, 120); });
   kind.addEventListener('change', () => { filter.kind = kind.value; apply(); });
   unsaved.addEventListener('change', () => { filter.unsaved = unsaved.checked; apply(); });
+  failedOnly.addEventListener('change', () => { filter.failed = failedOnly.checked; apply(); });
   apply();
 }

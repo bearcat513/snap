@@ -9,31 +9,31 @@
 <body>
   <main>
     <section id="setup">
-      <h1>Record a window or screen</h1>
-      <p class="muted">Chrome will ask which window, tab or screen to share. Keep this window open while recording — you can minimise it.</p>
+      <h1 data-i18n="recorder_title">Record a window or screen</h1>
+      <p class="muted" data-i18n="recorder_intro">Chrome will ask which window, tab or screen to share. Keep this window open while recording — you can minimise it.</p>
       <p id="sn-context" class="chip" hidden></p>
-      <label class="check"><input type="checkbox" id="opt-mic"> Include microphone narration</label>
-      <label class="check"><input type="checkbox" id="opt-countdown"> 3-2-1 countdown</label>
+      <label class="check"><input type="checkbox" id="opt-mic"> <span data-i18n="recorder_mic">Include microphone narration</span></label>
+      <label class="check"><input type="checkbox" id="opt-countdown"> <span data-i18n="recorder_countdown">3-2-1 countdown</span></label>
       <p id="mic-hint" class="small muted" hidden>Grant microphone access once from <a href="#" id="link-options">Options → Recording</a>.</p>
-      <button id="btn-start" class="primary big">Choose what to share…</button>
+      <button id="btn-start" class="primary big" data-i18n="recorder_start">Choose what to share…</button>
       <p id="error" class="error small" hidden></p>
     </section>
 
     <section id="countdown" hidden><div id="count" class="count">3</div></section>
 
     <section id="live" hidden>
-      <div class="status"><span class="dot"></span><span id="state-label">Recording</span><strong id="elapsed">00:00</strong></div>
+      <div class="status"><span class="dot"></span><span id="state-label" data-i18n="popup_recording">Recording</span><strong id="elapsed">00:00</strong></div>
       <p id="max" class="small muted"></p>
       <p id="warnings" class="small warn" hidden></p>
       <div class="actions">
-        <button id="btn-pause">Pause <kbd id="pause-key" hidden></kbd></button>
-        <button id="btn-resume" hidden>Resume</button>
-        <button id="btn-stop" class="primary">Stop &amp; edit</button>
+        <button id="btn-pause"><span data-i18n="common_pause">Pause</span> <kbd id="pause-key" hidden></kbd></button>
+        <button id="btn-resume" hidden data-i18n="common_resume">Resume</button>
+        <button id="btn-stop" class="primary" data-i18n="recorder_stop">Stop &amp; edit</button>
       </div>
     </section>
 
     <section id="finishing" hidden>
-      <p>Saving recording…</p>
+      <p data-i18n="recorder_saving">Saving recording…</p>
     </section>
   </main>
   <script type="module" src="recorder.js"></script>

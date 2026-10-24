@@ -5,11 +5,13 @@ import { getSettings, isSnHost, isBuiltinSnHost } from '../shared/settings.js';
 import { createJob, getJob, updateJob, findJobs, jobByRequestId, pendingGestureJob } from '../shared/jobs.js';
 import { getBlob, updateCapture, getCapture } from '../shared/db.js';
 import { bytesToBase64 } from '../shared/util.js';
-import { snErrorMessage, attachmentUrl } from '../shared/sn.js';
+import { snErrorMessage, attachmentUrl, canRedeliver } from '../shared/sn.js';
 import { claimRequestId, getRecording } from './state.js';
-import { snapVisible, snapRegion, snapFullPage } from './capture.js';
+import { snapVisible, snapRegion, snapFullPage, snapElement } from './capture.js';
 import { startTabRecording, openRecorderWindow } from './recording-control.js';
 import { openEditor } from './editor-tabs.js';
+import { startSession, getSession, cancelSession } from './session.js';
+import { attachDevtools } from './devtools.js';
 
 const P = globalThis.SnapProtocol;
 const FILE_CHUNK = 8 * 1024 * 1024;
@@ -58,7 +60,7 @@ async function failJob(job, err) {
 }
 
 async function promptForGesture(job) {
-  const command = job.mode === 'record-tab' ? 'record-toggle' : job.mode === 'region' ? 'snap-region' : 'snap-visible';
+  const command = job.mode === 'record-tab' ? 'record-toggle' : job.mode === 'region' ? 'snap-region' : job.mode === 'element' ? 'snap-element' : 'snap-visible';
   await updateJob(job.id, { state: 'awaiting-gesture' });
   await toFrame(job, {
     type: 'bridge:prompt',
@@ -70,6 +72,18 @@ async function promptForGesture(job) {
 
 async function runBridgeJob(job, tab) {
   if (job.mode === 'record-tab') return promptForGesture(job);
+  if (job.mode === 'session') {
+    // Captures taken with the usual shortcuts join the session; finishing it opens the report.
+    await startSession({ job, tabId: tab.id });
+    await updateJob(job.id, { state: 'capturing' });
+    await toFrame(job, {
+      // Auto-hides so it isn't in the session's screenshots.
+      type: 'bridge:prompt', requestId: job.requestId, timeoutMs: 6000,
+      action: 'add captures to this session. Finish it from the Snap icon',
+      shortcut: await shortcutFor('snap-visible'),
+    });
+    return;
+  }
   if (job.mode === 'record-window') {
     await updateJob(job.id, { state: 'capturing' });
     await openRecorderWindow(job);
@@ -90,13 +104,15 @@ async function runCaptureJob(job, tab) {
   await updateJob(job.id, { state: 'capturing' });
   const extra = { servicenow: job.servicenow, jobId: job.id };
   const capture = job.mode === 'region' ? await snapRegion(tab, extra)
-    : job.mode === 'fullpage' ? await snapFullPage(tab, extra)
-      : await snapVisible(tab, extra);
+    : job.mode === 'element' ? await snapElement(tab, extra)
+      : job.mode === 'fullpage' ? await snapFullPage(tab, extra)
+        : await snapVisible(tab, extra);
   if (!capture) {
     await updateJob(job.id, { state: 'cancelled' });
     await toFrame(job, { type: 'bridge:cancelled', requestId: job.requestId });
     return null;
   }
+  await attachDevtools(capture.id, tab.id);
   await openEditor(capture.id, { jobId: job.id, nearTabId: tab.id });
   return capture;
 }
@@ -128,20 +144,36 @@ export async function runPendingForGesture(tab, kind) {
 export async function handleBridgeCancel(msg, sender) {
   const job = await jobByRequestId(msg.requestId, sender.tab?.id);
   if (!job || ['done', 'cancelled'].includes(job.state)) return { ok: false };
-  await updateJob(job.id, { state: 'cancelled' });
-  await toFrame(job, { type: 'bridge:cancelled', requestId: job.requestId });
+  if ((await getSession())?.jobId === job.id) await cancelSession();
+  await cancelJob(job.id);
   return { ok: true };
 }
 
+/** Cancel a bridge job and tell its page. */
+export async function cancelJob(jobId) {
+  const job = await getJob(jobId);
+  if (!job || ['done', 'cancelled'].includes(job.state)) return;
+  await updateJob(job.id, { state: 'cancelled' });
+  await toFrame(job, { type: 'bridge:cancelled', requestId: job.requestId });
+}
+
+/** The /snap session prompt stays on the page until the session is finished. */
+export async function clearSessionPrompt(jobId) {
+  const job = await getJob(jobId);
+  if (job) await toFrame(job, { type: 'bridge:prompt-clear', requestId: job.requestId });
+}
+
 /** Editor asks to hand files to the page for attaching (§9.3). */
-export async function handleDeliver({ jobId, files }) {
+export async function handleDeliver({ jobId, files, note }) {
   const job = await getJob(jobId);
   if (!job || job.kind !== 'bridge') return { ok: false, error: 'This capture was not started from ServiceNow.' };
-  if (job.delivery) return { ok: false, error: 'Files were already sent to this record. Run /snap again to attach more.' };
+  if (job.delivery && !canRedeliver(job.delivery)) {
+    return { ok: false, error: job.delivery.state === 'done' ? 'Files were already sent to this record. Run /snap again to attach more.' : 'Delivery in progress…' };
+  }
   const reason = await deliveryBlocker(job);
   if (reason) return { ok: false, error: reason };
   const token = crypto.randomUUID();
-  await updateJob(job.id, { state: 'delivering', delivery: { state: 'pending', token, files } });
+  await updateJob(job.id, { state: 'delivering', delivery: { state: 'pending', token, files, note, at: Date.now(), attempt: (job.delivery?.attempt || 0) + 1 } });
   const useIframe = isBuiltinSnHost(new URL(job.servicenow.origin).host);
   try {
     await chrome.tabs.sendMessage(job.tabId, { type: 'bridge:deliver', requestId: job.requestId, jobId, token, useIframe }, { frameId: job.frameId || 0 });
@@ -168,7 +200,7 @@ export async function snAvailability({ captureId }) {
   if (!capture?.servicenow) return { available: false, reason: 'Not started from ServiceNow (run /snap on a record).' };
   const job = await getJob(capture.jobId);
   if (!job) return { available: false, reason: 'The original /snap request has expired.' };
-  if (job.delivery) {
+  if (job.delivery && !canRedeliver(job.delivery)) {
     return job.delivery.state === 'done'
       ? { available: false, reason: 'Already attached. Run /snap again to attach more.' }
       : { available: false, reason: 'Delivery in progress…' };
@@ -190,7 +222,7 @@ export async function handleClaim({ jobId, token }, sender) {
   if (!job?.delivery || job.delivery.token !== token || job.delivery.state !== 'pending') return { ok: false, error: 'Unknown or used delivery' };
   if (!senderMayClaim(job, sender)) return { ok: false, error: 'Delivery not allowed from this frame' };
   await updateJob(job.id, { delivery: { ...job.delivery, state: 'claimed' } });
-  return { ok: true, origin: job.servicenow.origin, requestId: job.requestId, files: job.delivery.files };
+  return { ok: true, origin: job.servicenow.origin, requestId: job.requestId, files: job.delivery.files, note: job.delivery.note || '' };
 }
 
 /** Chunked file transfer for frames that can't read IndexedDB directly (custom hosts, partitioned storage). */

@@ -55,6 +55,7 @@ export function extensionForMime(mime) {
   if (mime.startsWith('video/webm')) return 'webm';
   if (mime === 'image/png') return 'png';
   if (mime === 'image/jpeg') return 'jpg';
+  if (mime === 'image/gif') return 'gif';
   if (mime === 'application/pdf') return 'pdf';
   return 'bin';
 }

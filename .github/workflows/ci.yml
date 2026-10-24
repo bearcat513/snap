@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+
+  e2e:
+    # Headless browser + a mock ServiceNow instance over TLS (tests/e2e). Edge is informational until
+    # it has passed a few runs: see "Browser support" in the README.
+    name: e2e (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.browser == 'edge' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chrome, edge]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: chrome
+        if: matrix.browser == 'chrome'
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+      - id: edge
+        if: matrix.browser == 'edge'
+        uses: browser-actions/setup-edge@v1
+        with:
+          edge-version: stable
+      - name: Run e2e
+        run: npm run test:e2e
+        env:
+          CHROME: ${{ matrix.browser == 'chrome' && steps.chrome.outputs.chrome-path || steps.edge.outputs.edge-path }}
+          CHROME_ARGS: --no-sandbox
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [unit, e2e]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/check-version.mjs "$GITHUB_REF_NAME"
+      - run: npm run zip
+      - name: Publish the zip to the GitHub release
+        run: gh release create "$GITHUB_REF_NAME" snap-companion.zip --title "Snap Companion $GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

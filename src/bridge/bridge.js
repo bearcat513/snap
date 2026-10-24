@@ -44,7 +44,7 @@ async function main() {
       const f = claim.files[i];
       files.push({ name: f.name, mimeType: f.mimeType, blob: await readFile(i, f) });
     }
-    window.parent.postMessage(P.envelope('snap:file', claim.requestId, { files }), claim.origin);
+    window.parent.postMessage(P.envelope('snap:file', claim.requestId, { files, note: claim.note || '' }), claim.origin);
   } catch (err) {
     await chrome.runtime.sendMessage({ type: 'bridge.deliveryFailed', jobId, token, error: err.message });
     window.parent.postMessage(P.envelope('snap:error', claim.requestId, { message: err.message }), claim.origin);

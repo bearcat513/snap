@@ -2,6 +2,7 @@ import { listCaptures, getBlob } from '../shared/db.js';
 import { isCapturableUrl, formatDuration } from '../shared/util.js';
 import { getSettings, setSettings } from '../shared/settings.js';
 import '../ui/theme.js';
+import { t } from '../ui/i18n.js';
 
 const $ = (id) => document.getElementById(id);
 const send = (msg) => chrome.runtime.sendMessage(msg);
@@ -13,7 +14,7 @@ const capturable = tab && (!tab.url || isCapturableUrl(tab.url));
 let delay = 0;
 function renderDelay() {
   document.querySelectorAll('[data-delay]').forEach((b) => b.setAttribute('aria-checked', String(Number(b.dataset.delay) === delay)));
-  document.querySelectorAll('[data-capture]').forEach((b) => { b.title = delay ? `Captures ${delay}s after you click` : ''; });
+  document.querySelectorAll('[data-capture]').forEach((b) => { b.title = delay ? t('popup_delay_tip', delay) : ''; });
 }
 document.querySelectorAll('[data-delay]').forEach((b) => b.addEventListener('click', async () => {
   delay = Number(b.dataset.delay);
@@ -31,7 +32,7 @@ async function init() {
 
   if (!capturable) {
     $('restricted').hidden = false;
-    document.querySelectorAll('[data-capture], #btn-rec-tab').forEach((b) => { b.disabled = true; });
+    document.querySelectorAll('[data-capture], #btn-rec-tab, #btn-viewports').forEach((b) => { b.disabled = true; });
   }
 
   const state = await send({ type: 'popup:state', tabId: tab?.id });
@@ -47,10 +48,23 @@ async function init() {
   if (state?.pending) {
     const p = state.pending;
     $('pending').hidden = false;
-    $('pending-text').textContent = `${p.servicenow?.label || 'Record'}: ${p.mode === 'record-tab' ? 'start the tab recording' : 'take the screenshot'}`;
+    $('pending-text').textContent = t(p.mode === 'record-tab' ? 'popup_pending_record' : 'popup_pending_shot', p.servicenow?.label || t('common_record'));
   }
   renderRecording(state?.recording);
+  renderSession(state?.session);
+  $('opt-devtools').checked = !!state?.devtools;
+  $('opt-devtools').disabled = !capturable;
   await renderRecent();
+}
+
+function renderSession(session) {
+  $('session').hidden = !session;
+  $('btn-session-start').hidden = !!session;
+  if (!session) return;
+  const n = session.captureIds.length;
+  const forRecord = session.servicenow ? t('popup_session_for', session.servicenow.label) : '';
+  $('session-text').textContent = n === 1 ? t('popup_session_one', forRecord) : t('popup_session_many', n, forRecord);
+  $('btn-session-finish').disabled = false;
 }
 
 let timer = null;
@@ -60,7 +74,7 @@ function renderRecording(rec) {
   $('actions').hidden = !!rec;
   if (!rec) return;
   $('recording').classList.toggle('paused', rec.paused);
-  $('rec-label').textContent = rec.paused ? 'Paused' : rec.kind === 'tab' ? 'Recording tab' : 'Recording window';
+  $('rec-label').textContent = t(rec.paused ? 'popup_paused' : rec.kind === 'tab' ? 'popup_recording_tab' : 'popup_recording_window');
   $('btn-pause').hidden = rec.paused;
   $('btn-resume').hidden = !rec.paused;
   const tick = () => {
@@ -99,7 +113,7 @@ async function renderRecent() {
     title.textContent = c.title;
     const sub = document.createElement('span');
     sub.className = 'muted small';
-    sub.textContent = `${c.kind === 'recording' ? 'Recording' : 'Screenshot'} · ${new Date(c.createdAt).toLocaleString()}`;
+    sub.textContent = `${t(c.kind === 'recording' ? 'popup_recording_kind' : 'popup_screenshot_kind') || c.kind} · ${new Date(c.createdAt).toLocaleString()}`;
     meta.append(title, sub);
     btn.append(meta);
     btn.addEventListener('click', () => {
@@ -131,6 +145,43 @@ $('btn-rec-window').addEventListener('click', async () => {
   }
   window.close();
 });
+$('btn-session-start').addEventListener('click', async () => {
+  await send({ type: 'session:start', tabId: tab?.id });
+  refreshState();
+});
+$('btn-session-finish').addEventListener('click', async () => {
+  await send({ type: 'session:finish', tabId: tab?.id });
+  window.close();
+});
+$('btn-session-cancel').addEventListener('click', async () => {
+  await send({ type: 'session:cancel' });
+  refreshState();
+});
+$('btn-viewports').addEventListener('click', async () => {
+  // The DevTools protocol emulates each width; ask for it inside this click.
+  if (!(await chrome.permissions.request({ permissions: ['debugger'] }).catch(() => false))) {
+    chrome.tabs.create({ url: chrome.runtime.getURL('src/options/options.html#screenshots') });
+    window.close();
+    return;
+  }
+  await send({ type: 'capture:viewports', tabId: tab.id });
+  window.close();
+});
+$('opt-devtools').addEventListener('change', async (e) => {
+  const box = e.target;
+  if (box.checked) {
+    // Ask inside the click; Chrome then shows its "started debugging this browser" bar.
+    if (!(await chrome.permissions.request({ permissions: ['debugger'] }).catch(() => false))) { box.checked = false; return; }
+    const res = await send({ type: 'devtools:start', tabId: tab.id });
+    if (!res?.ok) {
+      box.checked = false;
+      $('error').textContent = res?.error || t('popup_devtools_failed');
+      $('error').hidden = false;
+    }
+  } else {
+    await send({ type: 'devtools:stop', tabId: tab.id });
+  }
+});
 $('btn-pending').addEventListener('click', async () => {
   await send({ type: 'bridge:run-pending', tabId: tab.id });
   window.close();
@@ -140,11 +191,17 @@ $('btn-resume').addEventListener('click', async () => { await send({ type: 'reco
 $('btn-stop').addEventListener('click', async () => { await send({ type: 'record:stop' }); window.close(); });
 $('btn-library').addEventListener('click', () => { send({ type: 'open:library' }); window.close(); });
 $('btn-options').addEventListener('click', () => { chrome.runtime.openOptionsPage(); window.close(); });
+$('btn-sidepanel').addEventListener('click', async () => {
+  // Must run inside the click (user gesture).
+  await chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {});
+  window.close();
+});
 $('btn-shortcuts').addEventListener('click', () => { chrome.tabs.create({ url: 'chrome://extensions/shortcuts' }); window.close(); });
 
 async function refreshState() {
   const state = await send({ type: 'popup:state', tabId: tab?.id });
   renderRecording(state?.recording);
+  renderSession(state?.session);
 }
 
 window.addEventListener('unload', () => urls.forEach((u) => URL.revokeObjectURL(u)));

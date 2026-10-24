@@ -40,6 +40,13 @@ export class ContextForm extends EventTarget {
     this.renderCustomFields();
   }
 
+  /** Replace the steps list (e.g. from a generated guide). */
+  setSteps(steps) {
+    this.steps = [...steps];
+    this.renderSteps();
+    this.changed();
+  }
+
   get() {
     return {
       recordUrl: this.$('ctx-recordUrl').value.trim(),

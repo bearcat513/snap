@@ -13,55 +13,72 @@
   </header>
 
   <div id="error" class="banner error-banner" hidden></div>
-  <div id="restricted" class="banner" hidden>Chrome doesn't allow capturing this page. Window/screen recording still works.</div>
+  <div id="restricted" class="banner" data-i18n="popup_restricted" hidden>Chrome doesn't allow capturing this page. Window/screen recording still works.</div>
 
   <section id="pending" class="banner pending" hidden>
-    <div><strong>ServiceNow request waiting</strong><br><span id="pending-text" class="small"></span></div>
-    <button id="btn-pending" class="primary">Continue</button>
+    <div><strong data-i18n="popup_pending_title">ServiceNow request waiting</strong><br><span id="pending-text" class="small"></span></div>
+    <button id="btn-pending" class="primary" data-i18n="popup_continue">Continue</button>
+  </section>
+
+  <section id="session" class="banner session" hidden>
+    <div><strong data-i18n="popup_session_title">Capture session</strong><br><span id="session-text" class="small"></span></div>
+    <div class="session-actions">
+      <button id="btn-session-cancel" class="ghost small" data-i18n="common_cancel" data-i18n-title="popup_session_cancel_title" title="Stop collecting; the captures stay in the library">Cancel</button>
+      <button id="btn-session-finish" class="primary" data-i18n="popup_finish">Finish</button>
+    </div>
   </section>
 
   <section id="recording" class="recording" hidden>
-    <div class="rec-status"><span class="dot"></span><span id="rec-label">Recording</span> <strong id="rec-time">00:00</strong></div>
+    <div class="rec-status"><span class="dot"></span><span id="rec-label" data-i18n="popup_recording">Recording</span> <strong id="rec-time">00:00</strong></div>
     <div class="rec-actions">
-      <button id="btn-pause">Pause<kbd data-cmd="record-pause"></kbd></button>
-      <button id="btn-resume" hidden>Resume<kbd data-cmd="record-pause"></kbd></button>
-      <button id="btn-stop" class="primary">Stop</button>
+      <button id="btn-pause"><span data-i18n="common_pause">Pause</span><kbd data-cmd="record-pause"></kbd></button>
+      <button id="btn-resume" hidden><span data-i18n="common_resume">Resume</span><kbd data-cmd="record-pause"></kbd></button>
+      <button id="btn-stop" class="primary" data-i18n="common_stop">Stop</button>
     </div>
   </section>
 
   <section id="actions">
     <div class="row-head">
-      <h2>Screenshot</h2>
-      <div class="delay" role="radiogroup" aria-label="Capture delay">
-        <span class="muted small">Delay</span>
-        <button role="radio" data-delay="0">Off</button>
+      <h2 data-i18n="popup_screenshot">Screenshot</h2>
+      <div class="delay" role="radiogroup" aria-label="Capture delay" data-i18n-aria-label="popup_delay_label">
+        <span class="muted small" data-i18n="popup_delay">Delay</span>
+        <button role="radio" data-delay="0" data-i18n="popup_delay_off">Off</button>
         <button role="radio" data-delay="3">3s</button>
         <button role="radio" data-delay="5">5s</button>
         <button role="radio" data-delay="10">10s</button>
       </div>
     </div>
-    <div class="grid">
-      <button data-capture="visible" class="tile"><span class="ico">▣</span>Visible<kbd data-cmd="snap-visible"></kbd></button>
-      <button data-capture="region" class="tile"><span class="ico">⬚</span>Region<kbd data-cmd="snap-region"></kbd></button>
-      <button data-capture="fullpage" class="tile"><span class="ico">⇣</span>Full page</button>
+    <div class="grid four">
+      <button data-capture="visible" class="tile"><span class="ico">▣</span><span data-i18n="popup_visible">Visible</span><kbd data-cmd="snap-visible"></kbd></button>
+      <button data-capture="region" class="tile"><span class="ico">⬚</span><span data-i18n="popup_region">Region</span><kbd data-cmd="snap-region"></kbd></button>
+      <button data-capture="element" class="tile"><span class="ico">⌖</span><span data-i18n="popup_element">Element</span><kbd data-cmd="snap-element"></kbd></button>
+      <button data-capture="fullpage" class="tile"><span class="ico">⇣</span><span data-i18n="popup_fullpage">Full page</span></button>
     </div>
-    <h2>Record</h2>
     <div class="grid two">
-      <button id="btn-rec-tab" class="tile"><span class="ico rec">●</span>This tab<kbd data-cmd="record-toggle"></kbd></button>
-      <button id="btn-rec-window" class="tile"><span class="ico">▭</span>Window / screen</button>
+      <button id="btn-viewports" class="tile" data-i18n-title="popup_viewports_title" title="Capture this page at several widths (Settings → Screenshots)"><span class="ico">⧉</span><span data-i18n="popup_viewports">Viewports</span></button>
+      <button id="btn-session-start" class="tile" data-i18n-title="popup_session_start_title" title="Collect several screenshots and recordings into one report"><span class="ico">❐</span><span data-i18n="popup_session_start">Start session</span><kbd data-cmd="session-toggle"></kbd></button>
     </div>
-    <p id="quota" class="small error" hidden>Storage is full — clear the library to record again.</p>
+    <h2 data-i18n="popup_record">Record</h2>
+    <div class="grid two">
+      <button id="btn-rec-tab" class="tile"><span class="ico rec">●</span><span data-i18n="popup_this_tab">This tab</span><kbd data-cmd="record-toggle"></kbd></button>
+      <button id="btn-rec-window" class="tile"><span class="ico">▭</span><span data-i18n="popup_window">Window / screen</span></button>
+    </div>
+    <p id="quota" class="small error" data-i18n="popup_quota" hidden>Storage is full — clear the library to record again.</p>
+    <label class="check devtools-toggle" data-i18n-title="popup_devtools_title" title="Attaches Chrome's DevTools protocol to this tab. Captures of this tab then include console errors and failed requests (no bodies or headers).">
+      <input type="checkbox" id="opt-devtools"> <span data-i18n="popup_devtools">Include console errors &amp; failed requests from this tab</span>
+    </label>
   </section>
 
   <section>
-    <div class="row-head"><h2>Recent</h2><button id="btn-library" class="ghost small">Library →</button></div>
+    <div class="row-head"><h2 data-i18n="popup_recent">Recent</h2><button id="btn-library" class="ghost small" data-i18n="common_library_link">Library →</button></div>
     <ul id="recent" class="recent"></ul>
-    <p id="recent-empty" class="muted small" hidden>No captures yet.</p>
+    <p id="recent-empty" class="muted small" data-i18n="common_no_captures" hidden>No captures yet.</p>
   </section>
 
   <footer>
-    <button id="btn-options" class="ghost small">Settings</button>
-    <button id="btn-shortcuts" class="ghost small">Shortcuts</button>
+    <button id="btn-sidepanel" class="ghost small" data-i18n="popup_sidepanel" data-i18n-title="popup_sidepanel_title" title="Recent captures beside the page, to drag into tickets and chats">Side panel</button>
+    <button id="btn-options" class="ghost small" data-i18n="common_settings">Settings</button>
+    <button id="btn-shortcuts" class="ghost small" data-i18n="popup_shortcuts">Shortcuts</button>
   </footer>
   <script type="module" src="popup.js"></script>
 </body>

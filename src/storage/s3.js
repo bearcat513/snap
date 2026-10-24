@@ -22,15 +22,6 @@ export function endpointOrigin(settings) {
   }
 }
 
-/** Must be called directly from a user gesture (the Save click). */
-export async function ensureS3Permission(settings) {
-  const origin = endpointOrigin(settings);
-  if (!origin) return false;
-  // No await before request(): it must run inside the click's user gesture. Already-granted
-  // origins resolve true without a prompt.
-  return chrome.permissions.request({ origins: [origin] });
-}
-
 async function getToken(settings) {
   if (settings['s3.auth'] !== 'oidc') return null;
   const cached = (await chrome.storage.session.get('s3Token')).s3Token;
@@ -84,11 +75,11 @@ const resumeId = (file) => `upload:${file.blobId}:${file.name}`;
 export const s3Adapter = {
   id: 's3',
   label: 'Amazon S3',
+  permissionOrigin: (s) => endpointOrigin(s),
 
   async isAvailable(ctx) {
     const s = ctx.settings;
     if (!destinationAllowed('s3', s)) return { available: false, reason: 'Disabled by your organization.' };
-    if (s['s3.mode'] === 'cognito') return { available: false, reason: 'Cognito mode needs the AWS SDK, which this build does not bundle. Use presign mode.' };
     if (!s['s3.presignEndpoint']) return { available: false, reason: 'Not configured (Options → S3).' };
     if (!endpointOrigin(s)) return { available: false, reason: 'Presign endpoint must be an https:// URL.' };
     return { available: true };

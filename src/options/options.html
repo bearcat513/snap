@@ -40,12 +40,23 @@
         <select data-key="snDefaultFormat"><option value="pdf">PDF report</option><option value="png">PNG image</option></select>
       </label>
       <label class="field"><span>File name pattern</span>
-        <input type="text" data-key="fileNamePattern">
-        <small class="muted">Tokens: <code>{table}</code> <code>{label}</code> <code>{host}</code> <code>{title}</code> and date parts like <code>{yyyyMMdd-HHmmss}</code>. Preview: <code id="name-preview"></code></small>
+        <input type="text" data-key="fileNamePattern" id="pattern-sn">
+        <small class="muted">Example: <code id="name-preview"></code></small>
       </label>
       <label class="field"><span>File name pattern outside ServiceNow</span>
-        <input type="text" data-key="fallbackFileNamePattern">
+        <input type="text" data-key="fallbackFileNamePattern" id="pattern-fallback">
+        <small class="muted">Example: <code id="fallback-preview"></code></small>
       </label>
+      <div class="tokens" aria-label="Insert a token into the pattern you last edited">
+        <span class="small muted">Insert:</span>
+        <button type="button" class="chip" data-token="{table}" title="ServiceNow table, e.g. incident">{table}</button>
+        <button type="button" class="chip" data-token="{label}" title="Record number, e.g. INC0012345">{label}</button>
+        <button type="button" class="chip" data-token="{host}" title="Instance or site host name">{host}</button>
+        <button type="button" class="chip" data-token="{title}" title="The capture's title">{title}</button>
+        <button type="button" class="chip" data-token="{yyyyMMdd-HHmmss}" title="Date and time">{yyyyMMdd-HHmmss}</button>
+        <button type="button" class="chip" data-token="{yyyy-MM-dd}" title="Date only">{yyyy-MM-dd}</button>
+      </div>
+      <p class="small muted">Date parts: <code>yyyy</code> <code>MM</code> <code>dd</code> <code>HH</code> <code>mm</code> <code>ss</code>, combined with <code>-</code> <code>_</code> <code>.</code> inside braces. Unsafe characters become <code>_</code>.</p>
       <label class="field"><span>Download subfolder</span><input type="text" data-key="downloadSubfolder"></label>
       <label class="check"><input type="checkbox" data-key="askWhereToSave"> Ask where to save each download</label>
       <label class="field"><span>PDF page size</span>
@@ -79,6 +90,27 @@
         </select>
         <small class="muted">The DevTools method shows Chrome's "started debugging this browser" bar while it runs.</small>
       </label>
+      <label class="field narrow"><span>Padding around captured elements (px)</span><input type="number" min="0" max="64" data-key="capture.elementPadding"></label>
+      <fieldset>
+        <legend>Viewport capture</legend>
+        <label class="field"><span>Widths (px, comma separated, up to 6)</span><input type="text" data-key="capture.viewports" data-list data-number placeholder="375, 768, 1280"></label>
+        <p class="small muted">Popup → <strong>Viewports</strong> captures the page at each width and opens them as one report. It uses the DevTools protocol, so Chrome asks for the "debugger" permission the first time.</p>
+      </fieldset>
+      <fieldset>
+        <legend>Suggested redactions</legend>
+        <label class="check"><input type="checkbox" data-key="redaction.suggest"> Look for sensitive text when capturing and offer to redact it</label>
+        <div class="checks">
+          <label class="check"><input type="checkbox" data-key="redaction.patterns" data-value="email"> Email addresses</label>
+          <label class="check"><input type="checkbox" data-key="redaction.patterns" data-value="phone"> Phone numbers</label>
+          <label class="check"><input type="checkbox" data-key="redaction.patterns" data-value="ipv4"> IP addresses</label>
+          <label class="check"><input type="checkbox" data-key="redaction.patterns" data-value="card"> Card numbers</label>
+          <label class="check"><input type="checkbox" data-key="redaction.patterns" data-value="token"> Tokens and keys</label>
+        </div>
+        <label class="field"><span>Your own patterns (regular expressions, one per line)</span>
+          <textarea rows="3" data-key="redaction.custom" data-lines placeholder="EMP-\d{6}"></textarea>
+          <small class="muted">Password fields are always suggested. The page's text is read on this device; only the positions of matches are kept, never the text. Nothing is redacted until you accept it in the editor.</small>
+        </label>
+      </fieldset>
     </section>
 
     <section id="tab-editor" class="panel" role="tabpanel" data-tab="editor" data-title="Editor &amp; appearance">
@@ -130,6 +162,14 @@
       <label class="check"><input type="checkbox" data-key="recording.clickHighlights"> Highlight clicks while recording a tab</label>
       <label class="check"><input type="checkbox" data-key="recording.keystrokes"> Show keyboard shortcuts and keys pressed while recording a tab</label>
       <p class="small muted">Keys typed into password fields are never shown. Plain typing in text boxes is shown as “typing…”, not as the characters.</p>
+      <label class="check"><input type="checkbox" data-key="recording.trackClicks"> Remember what I click while recording a tab, for step-by-step guides</label>
+      <p class="small muted">Stores each clicked element's name (button text, field label) and position, never what you type. The editor's <strong>Generate guide</strong> turns them into steps and keyframes.</p>
+      <label class="check"><input type="checkbox" data-key="recording.captions"> Captions and transcript from the microphone</label>
+      <div class="row">
+        <button id="btn-speech">Download speech model</button>
+        <span id="speech-status" class="small muted"></span>
+      </div>
+      <p class="small muted">Uses Chrome's on-device speech recognition only: if it isn't available, no captions are made and no audio is sent anywhere.</p>
       <fieldset>
         <legend>Quality</legend>
         <div class="cols three">
@@ -143,6 +183,16 @@
         </div>
         <p class="small muted">Higher settings make larger files. About <span id="size-estimate"></span> per minute at this bitrate.</p>
       </fieldset>
+      <fieldset>
+        <legend>GIF export</legend>
+        <div class="cols">
+          <label class="field"><span>Frame rate</span>
+            <select data-key="gif.fps" data-number><option value="5">5 fps</option><option value="8">8 fps</option><option value="10">10 fps</option><option value="15">15 fps</option></select>
+          </label>
+          <label class="field"><span>Maximum width (px)</span><input type="number" min="160" max="1600" step="10" data-key="gif.maxWidth"></label>
+        </div>
+        <p class="small muted">GIFs cover at most the first 20 seconds of the exported range.</p>
+      </fieldset>
     </section>
 
     <section id="tab-servicenow" class="panel" role="tabpanel" data-tab="servicenow" data-title="ServiceNow instances">
@@ -155,15 +205,46 @@
         <input type="text" id="host-input" placeholder="servicenow.example.com" aria-label="ServiceNow host">
         <button type="submit">Add host</button>
       </form>
-      <p class="small muted">SN Utils script command: copy <code>snutils/snap-command.js</code> from the extension folder into a new SN Utils slash command named <code>/snap</code>.</p>
+      <label class="check"><input type="checkbox" data-key="servicenow.workNote"> Add a work note to the record after attaching (file names, description, S3 and issue links)</label>
+      <p class="small muted">SN Utils script command: copy <code>snutils/snap-command.js</code> from the extension folder into a new SN Utils slash command named <code>/snap</code>. Use the latest copy: it also reads the instance's attachment size and type limits so the editor can warn before uploading.</p>
+    </section>
+
+    <section id="tab-trackers" class="panel" role="tabpanel" data-tab="trackers" data-title="Issue trackers">
+      <h2>Issue trackers</h2>
+      <p class="small muted">Configured destinations appear in the editor's Destinations panel. Tokens are kept on this device only (not synced). Chrome asks for access to each site on the first save.</p>
+      <fieldset>
+        <legend>Jira</legend>
+        <div class="cols">
+          <label class="field"><span>Site URL</span><input type="url" data-key="jira.baseUrl" placeholder="https://acme.atlassian.net"></label>
+          <label class="field"><span>Project key</span><input type="text" data-key="jira.projectKey" placeholder="APP"></label>
+          <label class="field"><span>Issue type</span><input type="text" data-key="jira.issueType" placeholder="Bug"></label>
+          <label class="field"><span>Account email (Jira Cloud)</span><input type="email" data-key="jira.email" placeholder="you@example.com"></label>
+        </div>
+        <label class="field"><span>API token (Cloud) or personal access token (Server / Data Center)</span><input type="password" autocomplete="off" data-key="jira.apiToken"></label>
+        <p class="small muted">Leave the email empty for a Server / Data Center personal access token. Creates an issue with the capture's context and attaches the files you pick.</p>
+      </fieldset>
+      <fieldset>
+        <legend>GitHub Issues</legend>
+        <div class="cols">
+          <label class="field"><span>Repository</span><input type="text" data-key="github.repo" placeholder="owner/name"></label>
+          <label class="field"><span>API URL</span><input type="url" data-key="github.apiUrl" placeholder="https://api.github.com"></label>
+        </div>
+        <label class="field"><span>Token (fine-grained: Issues read/write; Contents write for attachments)</span><input type="password" autocomplete="off" data-key="github.token"></label>
+        <label class="field"><span>Attachments branch (optional)</span><input type="text" data-key="github.attachmentsBranch" placeholder="snap-attachments">
+          <small class="muted">GitHub's API can't attach files to issues. With a branch set, files are committed there under <code>snap/</code> and linked from the issue; without one, the issue gets the context and any S3 links.</small>
+        </label>
+      </fieldset>
+      <fieldset>
+        <legend>Webhook</legend>
+        <label class="field"><span>URL</span><input type="url" data-key="webhook.url" placeholder="https://hooks.example.com/snap"></label>
+        <label class="field"><span>Bearer token (optional)</span><input type="password" autocomplete="off" data-key="webhook.token"></label>
+        <p class="small muted">POSTs <code>multipart/form-data</code>: a <code>metadata</code> JSON part (title, context, environment, links) and each file as <code>file</code>. A JSON reply with a <code>url</code> is shown as the saved location.</p>
+      </fieldset>
     </section>
 
     <section id="tab-s3" class="panel" role="tabpanel" data-tab="s3" data-title="Amazon S3">
       <h2>Amazon S3</h2>
       <p class="small muted">Uploads use presigned URLs from your own service. No AWS credentials are stored in the extension.</p>
-      <label class="field"><span>Mode</span>
-        <select data-key="s3.mode"><option value="presign">Presigned URL service</option><option value="cognito">Cognito identity pool (not in this build)</option></select>
-      </label>
       <label class="field"><span>Presign endpoint</span><input type="url" data-key="s3.presignEndpoint" placeholder="https://api.example.com/presign"></label>
       <label class="field"><span>Key prefix (sent to the presign service)</span><input type="text" data-key="s3.keyPrefix" placeholder="captures/"></label>
       <label class="field"><span>Authentication</span>
@@ -187,6 +268,18 @@
       </div>
       <p class="small muted">Oldest captures that were already saved somewhere are removed first. Unsaved captures are never removed automatically.</p>
       <button id="btn-library">Open library</button>
+    </section>
+
+    <section id="tab-about" class="panel" role="tabpanel" data-tab="about" data-title="About &amp; diagnostics">
+      <h2>About &amp; diagnostics</h2>
+      <p>Snap Companion <strong id="version"></strong> · <span id="browser" class="muted"></span></p>
+      <p class="small muted">Recent errors are kept on this device so you can send them to whoever supports the extension. The copy includes the version, browser, your settings without tokens, and the last 100 errors, with URLs cut to their origin and path.</p>
+      <div class="row">
+        <button id="btn-diag-copy" class="primary">Copy diagnostics</button>
+        <button id="btn-diag-clear" class="ghost">Clear</button>
+        <span id="diag-status" class="small muted"></span>
+      </div>
+      <ul id="diag-list" class="diag-list"></ul>
     </section>
 
     <section id="tab-shortcuts" class="panel" role="tabpanel" data-tab="shortcuts" data-title="Keyboard shortcuts">

@@ -6,6 +6,8 @@ import { createJob, getJob, updateJob } from '../shared/jobs.js';
 import { ensureOffscreen, closeOffscreen, sendToOffscreen } from './offscreen-client.js';
 import { getRecording, setRecording, getFlag } from './state.js';
 import { runCountdown } from './capture.js';
+import { updateCapture } from '../shared/db.js';
+import { videoTimeOf } from '../shared/guide.js';
 
 export async function startTabRecording(tab, { job } = {}) {
   if (await getRecording()) throw new Error('A recording is already in progress.');
@@ -22,7 +24,7 @@ export async function startTabRecording(tab, { job } = {}) {
     type: 'record:start',
     jobId: job.id,
     streamId,
-    opts: { mic: settings['recording.mic'], maxMinutes: settings['recording.maxMinutes'], playback: true, quality, videoBitsPerSecond: quality.videoBitsPerSecond },
+    opts: { mic: settings['recording.mic'], captions: settings['recording.captions'], maxMinutes: settings['recording.maxMinutes'], playback: true, quality, videoBitsPerSecond: quality.videoBitsPerSecond },
     source,
     servicenow: job.servicenow,
   });
@@ -31,15 +33,67 @@ export async function startTabRecording(tab, { job } = {}) {
     await closeOffscreen();
     throw new Error(res?.error || 'Could not start the recording.');
   }
-  await setRecording({ jobId: job.id, kind: 'tab', tabId: tab.id, startedAt: Date.now(), paused: false, pausedTotal: 0 });
-  if (settings['recording.clickHighlights']) injectOverlay(tab.id, 'src/content/click-highlight.js');
-  if (settings['recording.keystrokes']) injectOverlay(tab.id, 'src/content/keystrokes.js');
+  await chrome.storage.session.remove(CLICKS_KEY);
+  await setRecording({ jobId: job.id, kind: 'tab', tabId: tab.id, startedAt: Date.now(), paused: false, pausedTotal: 0, pauses: [] });
+  injectRecordingOverlays(tab.id);
   return job;
 }
 
-function injectOverlay(tabId, file) {
-  chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: [file] })
-    .catch(() => chrome.scripting.executeScript({ target: { tabId }, files: [file] }).catch(() => {}));
+/** Inject overlay scripts into every frame (falling back to the top frame), after an optional setup func. */
+async function injectOverlay(tabId, files, func, args) {
+  const run = async (target) => {
+    if (func) await chrome.scripting.executeScript({ target, func, args });
+    await chrome.scripting.executeScript({ target, files });
+  };
+  await run({ tabId, allFrames: true }).catch(() => run({ tabId }).catch(() => {}));
+}
+
+/** Inject the overlays chosen in Settings → Recording into the recorded tab (again after navigation). */
+export async function injectRecordingOverlays(tabId) {
+  const settings = await getSettings();
+  const rings = settings['recording.clickHighlights'];
+  const trackClicks = settings['recording.trackClicks'];
+  if (rings || trackClicks) {
+    await injectOverlay(tabId, ['src/shared/sensitive.js', 'src/content/click-highlight.js'], (o) => { window.__snapClickOpts = o; }, [{ rings, track: trackClicks }]);
+  }
+  if (settings['recording.keystrokes']) await injectOverlay(tabId, ['src/content/keystrokes.js']);
+}
+
+const CLICKS_KEY = 'recClicks';
+let clickWrites = Promise.resolve();
+const ROLES = ['link', 'button', 'checkbox', 'radio', 'switch', 'field', 'tab', 'menuitem', 'option', 'element'];
+const fraction = (v) => (typeof v === 'number' && v >= 0 && v <= 1 ? Math.round(v * 10000) / 10000 : null);
+
+/** A click reported by click-highlight.js in the recorded tab (content-script message: validate everything). */
+export async function onRecordedClick(event, sender) {
+  const rec = await getRecording();
+  if (!rec || rec.kind !== 'tab' || sender.tab?.id !== rec.tabId || !event || typeof event !== 'object') return { ok: false };
+  const clean = {
+    at: Number.isFinite(event.at) ? event.at : Date.now(),
+    fx: fraction(event.fx),
+    fy: fraction(event.fy),
+    label: typeof event.label === 'string' ? event.label.slice(0, 80) : '',
+    role: ROLES.includes(event.role) ? event.role : 'element',
+  };
+  // Serialized: quick double clicks would otherwise race on the read-modify-write.
+  clickWrites = clickWrites.then(async () => {
+    const list = (await chrome.storage.session.get(CLICKS_KEY))[CLICKS_KEY] || [];
+    list.push(clean);
+    await chrome.storage.session.set({ [CLICKS_KEY]: list.slice(-500) });
+  }).catch(() => {});
+  await clickWrites;
+  return { ok: true };
+}
+
+/** Clicks recorded during `rec`, converted to video time ({ t, fx, fy, label, role }); clears the buffer. */
+async function collectClicks(rec) {
+  await clickWrites;
+  const list = (await chrome.storage.session.get(CLICKS_KEY))[CLICKS_KEY] || [];
+  await chrome.storage.session.remove(CLICKS_KEY);
+  return list
+    .map((e) => ({ t: videoTimeOf(e.at, rec.startedAt, rec.pauses), fx: e.fx, fy: e.fy, label: e.label, role: e.role }))
+    .filter((e) => e.t !== null)
+    .sort((a, b) => a.t - b.t);
 }
 
 export async function openRecorderWindow(job) {
@@ -52,7 +106,7 @@ export async function openRecorderWindow(job) {
 
 /** Called by the recorder window once getDisplayMedia succeeded and MediaRecorder is running. */
 export async function onRecorderStarted(jobId, windowId) {
-  await setRecording({ jobId, kind: 'window', windowId, startedAt: Date.now(), paused: false, pausedTotal: 0 });
+  await setRecording({ jobId, kind: 'window', windowId, startedAt: Date.now(), paused: false, pausedTotal: 0, pauses: [] });
 }
 
 async function sendControl(type) {
@@ -65,13 +119,18 @@ async function sendControl(type) {
 
 export async function pauseRecording() {
   const rec = await sendControl('record:pause');
-  if (rec && !rec.paused) await setRecording({ ...rec, paused: true, pausedAt: Date.now() });
+  if (rec && !rec.paused) {
+    const now = Date.now();
+    await setRecording({ ...rec, paused: true, pausedAt: now, pauses: [...(rec.pauses || []), [now, null]] });
+  }
 }
 
 export async function resumeRecording() {
   const rec = await sendControl('record:resume');
   if (rec && rec.paused) {
-    await setRecording({ ...rec, paused: false, pausedAt: null, pausedTotal: rec.pausedTotal + (Date.now() - rec.pausedAt) });
+    const now = Date.now();
+    const pauses = (rec.pauses || []).map(([from, to]) => [from, to ?? now]);
+    await setRecording({ ...rec, paused: false, pausedAt: null, pausedTotal: rec.pausedTotal + (now - rec.pausedAt), pauses });
   }
 }
 
@@ -85,12 +144,17 @@ export async function stopRecording() {
   return sendControl('record:stop');
 }
 
-/** Cleanup after the recorder reports completion; returns the recording state that ended. */
-export async function onRecordingEnded(jobId) {
+/**
+ * Cleanup after the recorder reports completion; returns the recording state that ended. With a
+ * captureId, the clicks made during a tab recording are saved on it for guides.
+ */
+export async function onRecordingEnded(jobId, captureId) {
   const rec = await getRecording();
   if (!rec || rec.jobId !== jobId) return null;
   await setRecording(null);
   if (rec.kind === 'tab') {
+    const clicks = await collectClicks(rec);
+    if (captureId && clicks.length) await updateCapture(captureId, (c) => { c.clicks = clicks; });
     if (rec.tabId) {
       chrome.scripting.executeScript({
         target: { tabId: rec.tabId, allFrames: true },

@@ -17,9 +17,10 @@ const scratch = mkdtempSync(join(tmpdir(), 'snap-e2e-'));
 execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', join(scratch, 'key.pem'), '-out', join(scratch, 'cert.pem'),
   '-days', '1', '-subj', '/CN=acme.service-now.com', '-addext', 'subjectAltName=DNS:acme.service-now.com'], { stdio: 'ignore' });
 const EXT = join(scratch, 'ext');
-for (const p of ['manifest.json', 'managed_schema.json', 'icons', 'src', 'snutils']) cpSync(join(ROOT, p), join(EXT, p), { recursive: true });
+for (const p of ['manifest.json', 'managed_schema.json', '_locales', 'icons', 'src', 'snutils']) cpSync(join(ROOT, p), join(EXT, p), { recursive: true });
 const manifest = JSON.parse(readFileSync(join(EXT, 'manifest.json'), 'utf8'));
 manifest.host_permissions.push('<all_urls>');
+manifest.permissions.push('debugger'); // viewport + console/network capture (normally an optional grant)
 writeFileSync(join(EXT, 'manifest.json'), JSON.stringify(manifest, null, 2));
 const PORT = 8443;
 const srv = startServer({ port: PORT, snapCommandPath: join(ROOT, 'snutils/snap-command.js'), certDir: scratch });
@@ -34,7 +35,7 @@ const sessions = new Map();
 b.on((m) => {
   const tag = sessions.get(m.sessionId) || m.sessionId?.slice(0, 6);
   if (m.method === 'Runtime.exceptionThrown') errors.push(`[${tag}] ${m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text}`);
-  if (m.method === 'Runtime.consoleAPICalled' && ['error', 'warning'].includes(m.params.type)) errors.push(`[${tag} console.${m.params.type}] ${m.params.args.map((a) => a.value ?? a.description).join(' ')}`);
+  if (m.method === 'Runtime.consoleAPICalled' && ['error', 'warning'].includes(m.params.type) && m.params.args[0]?.value !== 'boom-e2e') errors.push(`[${tag} console.${m.params.type}] ${m.params.args.map((a) => a.value ?? a.description).join(' ')}`);
 });
 const evalIn = async (sessionId, expression) => {
   const r = await b.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, sessionId);
@@ -134,6 +135,15 @@ try {
       return { region: blur, changedPixels: diff, total: o.length / 4 };
     })()`);
     check('redaction changes underlying pixels', redacted.changedPixels > 0, JSON.stringify(redacted));
+
+    // Smart redaction: the page's "jane.doe@example.com" is suggested, then accepted.
+    const suggest = await evalIn(ed, `({ shown: !document.getElementById('suggest-banner').hidden, text: document.getElementById('suggest-text').textContent })`);
+    check('sensitive text found at capture time is suggested', suggest.shown && /1 email address/.test(suggest.text), JSON.stringify(suggest));
+    await evalIn(ed, `document.getElementById('btn-suggest-all').click()`);
+    await sleep(600);
+    const accepted = await evalIn(ed, `(async () => { const { getCapture } = await import('/src/shared/db.js'); const cap = await getCapture(new URLSearchParams(location.search).get('capture'));
+      const b = cap.annotations.shapes.at(-1); return { types: cap.annotations.shapes.map(s => s.type), box: b.props, w: canvas.width, h: canvas.height, reviewed: !!cap.suggestionsReviewed, banner: !document.getElementById('suggest-banner').hidden }; })()`);
+    check('accepting suggestions adds redactions inside the image', accepted.types.length === 4 && accepted.types[3] === 'blur' && accepted.box.w > 40 && accepted.box.x + accepted.box.w <= accepted.w && accepted.reviewed && !accepted.banner, JSON.stringify(accepted));
 
     // Save without description → blocked.
     await evalIn(ed, `document.getElementById('btn-save').click()`);
@@ -338,6 +348,32 @@ try {
       await exportAndWait('sidecar', 15000);
       const md = readFileSync(newestDownload('.md'), 'utf8');
       check('sidecar records trim, redactions and keyframes', md.includes('**Trimmed:** 00:00.5–00:03.0') && md.includes('**Redacted regions:** 1') && md.includes('## Keyframes'), md.split('\n').filter((l) => /Trimmed|Redacted|Keyframes/.test(l)).join(' | '));
+
+      // GIF of the trimmed, redacted range; Chrome must be able to decode it.
+      await exportAndWait('gif', 90000);
+      const gifFile = newestDownload('.gif');
+      const gif = gifFile ? readFileSync(gifFile) : Buffer.alloc(0);
+      const decoded = gif.length ? await evalIn(vS, `(async () => { const img = new Image(); img.src = 'data:image/gif;base64,${gif.toString('base64')}'; await img.decode(); return [img.naturalWidth, img.naturalHeight]; })()`) : null;
+      check('GIF export decodes, at most 800 px wide', gif.subarray(0, 6).toString() === 'GIF89a' && decoded && decoded[0] > 100 && decoded[0] <= 800, `${gifFile} ${gif.length} bytes ${JSON.stringify(decoded)}`);
+
+      // Guide from recorded clicks (tab recordings store them; injected here since tabCapture needs a real gesture).
+      await evalIn(vS, `(async () => { const { updateCapture } = await import('/src/shared/db.js');
+        await updateCapture(new URLSearchParams(location.search).get('capture'), (c) => { c.clicks = [
+          { t: 800, fx: 0.2, fy: 0.3, label: 'Resolve', role: 'button' }, { t: 900, fx: 0.2, fy: 0.3, label: 'Resolve', role: 'button' },
+          { t: 2000, fx: 0.6, fy: 0.5, label: 'Close notes', role: 'field' }, { t: 3500, fx: 0.5, fy: 0.5, label: 'After trim', role: 'link' }]; }); })()`);
+      await evalIn(vS, 'location.reload()');
+      await sleep(1500);
+      await waitFor(() => evalIn(vS, `!document.getElementById('btn-guide').hidden`).catch(() => false), { label: 'guide button', timeout: 15000 });
+      await evalIn(vS, `document.getElementById('btn-guide').click()`);
+      await sleep(400);
+      await evalIn(vS, `document.querySelector('#confirm-dialog [value="ok"]').click()`); // replace the two keyframes
+      await sleep(1200);
+      const guide = await evalIn(vS, `(async () => { const { getCapture } = await import('/src/shared/db.js'); const c = await getCapture(new URLSearchParams(location.search).get('capture'));
+        return { steps: c.context.steps, keys: c.keyframes.map(k => [k.timeMs, k.step && k.step.n]) }; })()`);
+      check('guide: one step per click inside the trim, double click merged', JSON.stringify(guide.steps) === JSON.stringify(['Click “Resolve”', 'Click the “Close notes” field']) && JSON.stringify(guide.keys) === '[[650,1],[1850,2]]', JSON.stringify(guide));
+      await exportAndWait('pdf', 30000);
+      const guidePdf = readFileSync(newestDownload('.pdf')).toString('latin1');
+      check('guide PDF captions each step', guidePdf.includes('Step 1: Click') && guidePdf.includes('Step 2: Click the'), guidePdf.match(/Step \d[^)]*/g)?.join(' | '));
     }
   }
 
@@ -376,6 +412,183 @@ try {
     await waitFor(async () => (await targets()).filter((t) => t.url.includes('editor.html?capture=')).length > editorsBefore, { label: 'delayed capture', timeout: 10000 });
     const elapsed = Date.now() - t0;
     check('delayed capture waits and counts down on the badge', elapsed >= 2000 && /^[12]$/.test(badge), `${elapsed}ms, badge "${badge}"`);
+  }
+
+  // ---------------- §5/§6 additions: element, session (+limits, work note), trackers + retry, compare,
+  // viewports, console/network capture, side panel, storage meter, diagnostics, i18n.
+  if (only === 'all' || only === 'extras') {
+    const msg = await evalIn(swS, `chrome.i18n.getMessage('popup_delay_tip', ['3'])`);
+    check('localized message with a substitution', msg === 'Captures 3s after you click', msg);
+    const tabId = await evalIn(swS, `chrome.tabs.query({ url: 'https://acme.service-now.com/*' }).then(t => t[0].id)`);
+    // Editor tabs that exist before an action, so the next wait only matches the tab it opens.
+    const editorIds = async () => new Set((await targets()).filter((t) => t.url.includes('editor.html?capture=')).map((t) => t.targetId));
+    const newEditor = (label, before) => findTarget((t) => t.type === 'page' && t.url.includes('editor.html?capture=') && !before.has(t.targetId), label);
+    const capField = (s, expr) => evalIn(s, `(async () => { const { getCapture } = await import('/src/shared/db.js'); const c = await getCapture(new URLSearchParams(location.search).get('capture')); return ${expr}; })()`);
+
+    // Element capture through /snap: hover the <h1>, click it.
+    await b.send('Target.activateTarget', { targetId: snTarget });
+    let before = await editorIds();
+    await evalIn(sn, `window.scrollTo(0, 0); window.__events = []; runSnap('element')`);
+    await sleep(2000);
+    const h1 = await center(sn, 'h1');
+    await b.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: h1.x, y: h1.y }, sn);
+    await sleep(200);
+    await click(sn, h1.x, h1.y);
+    const elT = await newEditor('element editor', before);
+    const elS = await attach(elT.targetId, 'editor-element');
+    await waitFor(() => evalIn(elS, `!document.getElementById('canvas-wrap').hidden`), { label: 'element canvas', timeout: 15000 });
+    const edpr = await evalIn(sn, 'devicePixelRatio');
+    const edims = await evalIn(elS, `({ w: canvas.width, h: canvas.height })`);
+    check('element capture is the element plus padding', Math.abs(edims.h - (h1.h + 16) * edpr) <= 2 && edims.w <= (h1.w + 16) * edpr + 2 && edims.w > h1.w * edpr * 0.9, `${JSON.stringify(edims)} h1 ${h1.w}×${h1.h}`);
+
+    // Session through /snap, with attachment limits read from the instance and a work note.
+    srv.state.limits = { max: '1', ext: 'pdf,png' };
+    await evalIn(swS, `chrome.storage.sync.set({ 'servicenow.workNote': true }).then(() => true)`);
+    const { targetId: spT } = await b.send('Target.createTarget', { url: `chrome-extension://${id}/src/sidepanel/sidepanel.html` });
+    const sp = await attach(spT, 'sidepanel');
+    await b.send('Target.activateTarget', { targetId: snTarget });
+    await evalIn(sn, `window.__events = []; runSnap('session')`);
+    await waitFor(() => evalIn(swS, `chrome.storage.session.get('session').then(r => !!r.session)`), { label: 'session started' });
+    for (let i = 0; i < 2; i++) {
+      await evalIn(sp, `chrome.runtime.sendMessage({ type: 'capture:start', mode: 'visible', tabId: ${tabId}, delaySeconds: 0 })`);
+      await waitFor(() => evalIn(swS, `chrome.storage.session.get('session').then(r => r.session.captureIds.length === ${i + 1})`), { label: `session capture ${i + 1}`, timeout: 10000 });
+    }
+    const sbadge = await evalIn(swS, `chrome.action.getBadgeText({})`);
+    check('captures join the open session (badge counts them)', sbadge === 'S2', sbadge);
+    before = await editorIds();
+    await evalIn(sp, `chrome.runtime.sendMessage({ type: 'session:finish', tabId: ${tabId} })`);
+    const ssT = await newEditor('session editor', before);
+    const ss = await attach(ssT.targetId, 'editor-session');
+    await b.send('Target.activateTarget', { targetId: ssT.targetId });
+    await waitFor(() => evalIn(ss, `document.querySelectorAll('#session-list li').length === 2 && document.querySelectorAll('#destinations .dest').length >= 3`).catch(() => false), { label: 'session editor', timeout: 15000 });
+    const sdest = await evalIn(ss, `[...document.querySelectorAll('#destinations .dest')].map(d => d.innerText.replace(/\\n/g, ' ') + (d.classList.contains('on') ? ' [on]' : ''))`);
+    check('session report: ServiceNow on, instance limits shown', sdest.some((d) => d.includes('INC0012345') && d.includes('up to 1 MB per file; types: pdf, png') && d.endsWith('[on]')), sdest.join(' | '));
+    await evalIn(ss, `(() => { const d = document.getElementById('ctx-description'); d.value = 'Two-step repro'; d.dispatchEvent(new Event('input')); const f = document.getElementById('cf-environment'); f.value = 'Dev'; f.dispatchEvent(new Event('input')); })()`);
+    const uploadsBefore = srv.uploads.length;
+    await evalIn(ss, `document.getElementById('btn-save').click()`);
+    await sleep(800);
+    await evalIn(ss, `document.querySelector('#confirm-dialog[open] [value="ok"]')?.click()`); // unreviewed suggested redactions
+    await waitFor(() => srv.uploads.length > uploadsBefore, { label: 'session upload', timeout: 30000 });
+    await waitFor(() => srv.state.notes.length > 0, { label: 'work note', timeout: 10000 }).catch(() => {});
+    const spdf = srv.uploads.at(-1);
+    check('session attaches one PDF with a section per capture', spdf.name.endsWith('.pdf') && (spdf.text.match(/\/Subtype \/Image/g) || []).length === 2 && spdf.text.includes('(1. ') && spdf.text.includes('(2. '), spdf.name);
+    check('work note posted after attaching', srv.state.notes.length === 1 && /Snap Companion attached 1 file/.test(srv.state.notes[0].note) && srv.state.notes[0].token === 'TOKEN123', JSON.stringify(srv.state.notes));
+    srv.state.limits = null;
+
+    // Issue trackers + webhook (all served by the mock), webhook failing once, then retried from the library.
+    srv.state.failHook = 1;
+    await evalIn(swS, `Promise.all([
+      chrome.storage.sync.set({ 'webhook.url': 'https://acme.service-now.com/hook', 'jira.baseUrl': 'https://acme.service-now.com/jira', 'jira.projectKey': 'APP', 'jira.email': 'qa@example.com',
+        'github.repo': 'acme/app', 'github.apiUrl': 'https://acme.service-now.com/gh' }),
+      chrome.storage.local.set({ 'webhook.token': 'hook-secret', 'jira.apiToken': 'jira-secret', 'github.token': 'gh-secret' }),
+    ]).then(() => true)`);
+    await evalIn(elS, 'location.reload()');
+    await sleep(1500);
+    await waitFor(() => evalIn(elS, `document.querySelectorAll('#destinations .dest').length === 6`).catch(() => false), { label: 'tracker destinations', timeout: 15000 });
+    await evalIn(elS, `(() => { for (const id of ['jira', 'github', 'webhook']) { const cb = document.getElementById('dest-' + id); if (!cb.checked) cb.click(); }
+      for (const id of ['servicenow', 'download']) { const cb = document.getElementById('dest-' + id); if (cb.checked) cb.click(); }
+      const d = document.getElementById('ctx-description'); d.value = 'Header overlaps the form'; d.dispatchEvent(new Event('input'));
+      const f = document.getElementById('cf-environment'); f.value = 'Prod'; f.dispatchEvent(new Event('input')); })()`);
+    await evalIn(elS, `document.getElementById('save-status').textContent = ''; document.getElementById('btn-save').click()`);
+    await sleep(600);
+    await evalIn(elS, `document.querySelector('#confirm-dialog[open] [value="ok"]')?.click()`);
+    await waitFor(() => evalIn(elS, `/Saved \\d|failed/.test(document.getElementById('save-status').textContent)`), { label: 'tracker save', timeout: 30000 })
+      .catch(async (e) => { console.log('DEBUG', await evalIn(elS, `JSON.stringify({ status: document.getElementById('save-status').textContent, toast: document.getElementById('toast').textContent, dlg: !!document.querySelector('dialog[open]'), dests: [...document.querySelectorAll('#destinations .dest')].map(d => d.innerText) })`)); throw e; });
+    const jira = srv.state.jira;
+    check('Jira: issue created with the description, the PNG attached', jira.issues.length === 1 && jira.issues[0].fields.summary === 'Header overlaps the form' && jira.issues[0].fields.project.key === 'APP'
+      && jira.issues[0].auth.startsWith('Basic ') && jira.attachments.length === 1 && jira.attachments[0].file.endsWith('.png') && jira.attachments.every((a) => a.xsrf === 'no-check' && a.key === 'APP-1'), JSON.stringify({ issues: jira.issues.map((i) => i.fields.summary), att: jira.attachments }));
+    check('Jira description converted to wiki markup', /^h1\. /.test(jira.issues[0]?.fields.description || '') && jira.issues[0].fields.description.includes('*Instance:*'), (jira.issues[0]?.fields.description || '').slice(0, 80));
+    const gh = srv.state.gh.issues;
+    check('GitHub: issue created (no attachments branch) with a bearer token', gh.length === 1 && gh[0].title === 'Header overlaps the form' && gh[0].auth === 'Bearer gh-secret' && gh[0].body.includes('## Description') && gh[0].body.includes('APP-1'), JSON.stringify(gh.map((i) => i.title)));
+    const elSaves = await capField(elS, `c.saves.map(s => s.adapter + ':' + s.ok)`);
+    check('first webhook attempt fails and is recorded', elSaves.includes('webhook:false') && srv.state.hooks.length === 0, JSON.stringify(elSaves));
+    const diag = await evalIn(swS, `chrome.storage.local.get('diagnostics.errors').then(r => (r['diagnostics.errors'] || []).map(e => e.source + ': ' + e.message))`);
+    check('diagnostics recorded the failure (no tokens)', diag.some((d) => d.startsWith('save:webhook') && d.includes('HTTP 500')) && !JSON.stringify(diag).includes('secret'), JSON.stringify(diag.slice(-3)));
+
+    const { targetId: lib2T } = await b.send('Target.createTarget', { url: `chrome-extension://${id}/src/editor/editor.html?view=library` });
+    const lib2 = await attach(lib2T, 'library-2');
+    await b.send('Target.activateTarget', { targetId: lib2T });
+    await waitFor(() => evalIn(lib2, `document.querySelectorAll('.lib-grid .card').length > 0`).catch(() => false), { label: 'library cards' });
+    const meter = await evalIn(lib2, `({ meter: !!document.querySelector('.storage .meter'), text: document.querySelector('.storage p')?.textContent || '' })`);
+    check('library shows a storage meter', meter.meter && /of 1\.0 GB library limit/.test(meter.text), meter.text);
+    await evalIn(lib2, `document.getElementById('lib-failed').click()`);
+    const failedCards = await evalIn(lib2, `[...document.querySelectorAll('.lib-grid .card')].filter(c => !c.hidden).length`);
+    check('"Failed saves" filter shows the failing capture', failedCards === 1, String(failedCards));
+    await evalIn(lib2, `(() => { const card = [...document.querySelectorAll('.lib-grid .card')].find(c => !c.hidden); card.querySelector('.card-more').click();
+      [...card.querySelectorAll('.card-menu button')].find(b => b.textContent.startsWith('Retry failed saves')).click(); })()`);
+    await waitFor(() => srv.state.hooks.length > 0, { label: 'webhook retry', timeout: 20000 }).catch(() => {});
+    const hook = srv.state.hooks[0];
+    check('retry from the library re-sends only the failed webhook save', !!hook && hook.auth === 'Bearer hook-secret' && hook.metadata && hook.files.length === 1 && hook.files[0].endsWith('.png')
+      && srv.state.jira.issues.length === 1 && srv.state.gh.issues.length === 1, JSON.stringify(hook));
+
+    // Before/after compare of two screenshots.
+    await evalIn(lib2, `location.reload()`);
+    await waitFor(() => evalIn(lib2, `document.querySelectorAll('.lib-grid .card').length > 0`).catch(() => false), { label: 'library reload' });
+    await evalIn(lib2, `document.getElementById('btn-compare').click()`);
+    await sleep(500);
+    await evalIn(lib2, `(() => { const cards = [...document.querySelectorAll('.lib-grid .card:not(.dim)')].slice(0, 2); cards.forEach(c => c.querySelector('.card-open').click()); })()`);
+    await sleep(300);
+    await evalIn(lib2, `(async () => { const c = [...document.querySelectorAll('.lib-grid .card:not(.dim)')]; if (document.querySelectorAll('.card.picked').length < 2) c[1].querySelector('.card-open').click(); })()`);
+    await sleep(300);
+    await evalIn(lib2, `[...document.querySelectorAll('.compare-bar button')].find(b => b.textContent === 'Side by side').click()`);
+    await waitFor(() => evalIn(lib2, `location.search.includes('capture=')`).catch(() => false), { label: 'compare editor', timeout: 15000 });
+    await waitFor(() => evalIn(lib2, `!document.getElementById('canvas-wrap').hidden && canvas.width > 0`).catch(() => false), { label: 'compare canvas', timeout: 15000 });
+    const cmp = await evalIn(lib2, `({ title: document.getElementById('title').value, w: canvas.width, h: canvas.height })`);
+    check('before/after comparison becomes a new screenshot', cmp.title.startsWith('Before / after') && cmp.w > cmp.h, JSON.stringify(cmp));
+
+    // Viewports (DevTools emulation) as a session of three widths.
+    await b.send('Target.activateTarget', { targetId: snTarget });
+    before = await editorIds();
+    await evalIn(sp, `chrome.runtime.sendMessage({ type: 'capture:viewports', tabId: ${tabId} })`);
+    const vpT = await newEditor('viewports editor', before);
+    const vp = await attach(vpT.targetId, 'editor-viewports');
+    await waitFor(() => evalIn(vp, `document.querySelectorAll('#session-list li').length === 3`).catch(() => false), { label: 'viewports session', timeout: 30000 });
+    const widths = await evalIn(vp, `(async () => { const { getCapture } = await import('/src/shared/db.js'); const s = await getCapture(new URLSearchParams(location.search).get('capture'));
+      const out = []; for (const id of s.members) { const m = await getCapture(id); out.push(m.source.width); } return out; })()`);
+    check('viewport capture: one screenshot per configured width', JSON.stringify(widths) === '[375,768,1280]', JSON.stringify(widths));
+
+    // Console + network capture for the ServiceNow tab.
+    const dtStart = await evalIn(sp, `chrome.runtime.sendMessage({ type: 'devtools:start', tabId: ${tabId} })`);
+    await b.send('Target.activateTarget', { targetId: snTarget });
+    await evalIn(sn, `console.error('boom-e2e', 42); fetch('/missing-e2e?token=abc123').catch(() => {}); true`);
+    await sleep(1500);
+    before = await editorIds();
+    await evalIn(sp, `chrome.runtime.sendMessage({ type: 'capture:start', mode: 'visible', tabId: ${tabId}, delaySeconds: 0 })`);
+    const dtT = await newEditor('devtools editor', before);
+    const dtS = await attach(dtT.targetId, 'editor-devtools');
+    await waitFor(() => evalIn(dtS, `!document.getElementById('canvas-wrap').hidden`).catch(() => false), { label: 'devtools capture', timeout: 15000 });
+    const dt = await capField(dtS, `c.devtools`);
+    const req = dt?.network?.find((r) => r.url.includes('/missing-e2e'));
+    check('console errors and failed requests are attached to the capture', dt && dtStart?.ok && dt.console.some((e) => e.text.includes('boom-e2e 42')) && req?.status === 404, JSON.stringify(dt)?.slice(0, 300));
+    check('request URLs keep parameter names only', req && req.url.endsWith('/missing-e2e?token=…') && !JSON.stringify(dt).includes('abc123'), req?.url);
+    await evalIn(sp, `chrome.runtime.sendMessage({ type: 'devtools:stop', tabId: ${tabId} })`);
+
+    // Side panel lists recent captures, ready to drag.
+    await evalIn(sp, 'location.reload()');
+    await waitFor(() => evalIn(sp, `document.querySelectorAll('#list .item').length > 0`).catch(() => false), { label: 'side panel items', timeout: 10000 });
+    const items = await evalIn(sp, `[...document.querySelectorAll('#list .item')].map(i => i.getAttribute('draggable'))`);
+    check('side panel lists recent captures as draggable items', items.length >= 3 && items.every((d) => d === 'true'), JSON.stringify(items.length));
+
+    // Options: new tabs, diagnostics, file-name tokens. Popup: localized, no errors.
+    const { targetId: optT } = await b.send('Target.createTarget', { url: `chrome-extension://${id}/src/options/options.html#about` });
+    const opt = await attach(optT, 'options');
+    await waitFor(() => evalIn(opt, `document.querySelectorAll('#diag-list li').length > 0`).catch(() => false), { label: 'options diagnostics', timeout: 10000 });
+    const o = await evalIn(opt, `({ tabs: [...document.querySelectorAll('#tabs [role=tab]')].map(t => t.textContent), diag: document.getElementById('diag-list').textContent,
+      jira: document.querySelector('[data-key="jira.baseUrl"]').value, token: document.querySelector('[data-key="jira.apiToken"]').type })`);
+    check('options: issue trackers and diagnostics tabs, settings filled in', o.tabs.includes('Issue trackers') && o.tabs.includes('About & diagnostics') && o.diag.includes('save:webhook')
+      && o.jira === 'https://acme.service-now.com/jira' && o.token === 'password', JSON.stringify(o).slice(0, 300));
+    await b.send('Target.activateTarget', { targetId: optT });
+    await evalIn(opt, `(() => { location.hash = 'saving'; const f = document.getElementById('pattern-fallback'); f.focus(); f.value = 'shot_'; f.dispatchEvent(new Event('input')); f.setSelectionRange(5, 5);
+      document.querySelector('[data-token="{title}"]').click(); })()`);
+    await sleep(600);
+    const pv = await evalIn(opt, `({ value: document.getElementById('pattern-fallback').value, preview: document.getElementById('fallback-preview').textContent })`);
+    check('file-name tokens insert at the cursor and preview', pv.value === 'shot_{title}' && pv.preview === 'shot_Example.png', JSON.stringify(pv));
+    await evalIn(opt, `chrome.storage.sync.remove(['fallbackFileNamePattern', 'fileNamePattern']).then(() => true)`); // back to the defaults
+    const { targetId: popT } = await b.send('Target.createTarget', { url: `chrome-extension://${id}/src/popup/popup.html` });
+    const pop = await attach(popT, 'popup');
+    await waitFor(() => evalIn(pop, `document.querySelectorAll('#recent li').length > 0`).catch(() => false), { label: 'popup recent', timeout: 10000 });
+    const p = await evalIn(pop, `({ lang: document.documentElement.lang, h2: document.querySelector('[data-i18n="popup_screenshot"]').textContent, element: !!document.querySelector('[data-capture="element"]'), session: document.getElementById('btn-session-start').hidden })`);
+    check('popup renders localized, with element and session controls', p.lang && p.h2 === 'Screenshot' && p.element && p.session === false, JSON.stringify(p));
   }
 } catch (err) {
   console.log('FATAL', err.message);

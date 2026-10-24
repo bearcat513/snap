@@ -111,7 +111,7 @@
         }
         files.push({ name: f.name, mimeType: f.mimeType, blob: new Blob(parts, { type: f.mimeType }) });
       }
-      toPage('snap:file', requestId, { files });
+      toPage('snap:file', requestId, { files, note: claim.note || '' });
     } catch (err) {
       toPage('snap:error', requestId, { message: err.message });
     }
@@ -119,8 +119,10 @@
 
   // ---- in-page prompt for requests that need a real user gesture (§11.6) ----
   let promptHost = null;
-  function showPrompt({ requestId, action, shortcut }) {
+  let promptTimer = null;
+  function showPrompt({ requestId, action, shortcut, timeoutMs }) {
     hidePrompt();
+    if (timeoutMs) promptTimer = setTimeout(hidePrompt, timeoutMs);
     promptHost = document.createElement('div');
     promptHost.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483647;';
     const root = promptHost.attachShadow({ mode: 'closed' });
@@ -144,6 +146,7 @@
     document.documentElement.appendChild(promptHost);
   }
   function hidePrompt() {
+    clearTimeout(promptTimer);
     if (promptHost) promptHost.remove();
     promptHost = null;
   }

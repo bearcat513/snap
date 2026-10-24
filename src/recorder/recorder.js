@@ -3,8 +3,12 @@
 import { startRecording } from '../shared/recording.js';
 import { getSettings, recordingQuality } from '../shared/settings.js';
 import '../ui/theme.js';
+import '../ui/i18n.js';
 import { createJob, getJob, updateJob } from '../shared/jobs.js';
 import { formatDuration } from '../shared/util.js';
+import { installErrorLogging } from '../shared/diagnostics.js';
+
+installErrorLogging('recorder');
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -79,7 +83,7 @@ $('btn-start').addEventListener('click', async () => {
     rec = await startRecording({
       jobId: job.id,
       stream,
-      opts: { mic: $('opt-mic').checked, maxMinutes: settings['recording.maxMinutes'], playback: false, videoBitsPerSecond: quality.videoBitsPerSecond },
+      opts: { mic: $('opt-mic').checked, captions: settings['recording.captions'], maxMinutes: settings['recording.maxMinutes'], playback: false, videoBitsPerSecond: quality.videoBitsPerSecond },
       source,
       servicenow: job.servicenow,
     });

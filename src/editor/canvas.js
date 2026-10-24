@@ -62,6 +62,7 @@ export class Annotator extends EventTarget {
     this.draft = null;
     this.drag = null;
     this.blurCache = new Map();
+    this.hints = []; // suggested redactions: dashed outlines, never exported
 
     canvas.addEventListener('pointerdown', (e) => this.onDown(e));
     canvas.addEventListener('pointermove', (e) => this.onMove(e));
@@ -180,6 +181,24 @@ export class Annotator extends EventTarget {
     this.doc.shapes.push(shape);
     this.commit();
     return shape;
+  }
+
+  /** Add several shapes as one undo step. */
+  addShapes(list) {
+    const shapes = list.map(({ type, props }) => ({ id: crypto.randomUUID(), type, props }));
+    this.doc.shapes.push(...shapes);
+    this.commit();
+    return shapes;
+  }
+
+  /** Suggested redactions to outline (image px): [{ x, y, w, h, kind }]. */
+  setHints(hints) {
+    this.hints = hints || [];
+    this.render();
+  }
+
+  hintAt(p) {
+    return this.hints.findIndex((h) => p.x >= h.x && p.x <= h.x + h.w && p.y >= h.y && p.y <= h.y + h.h);
   }
 
   addText(x, y, text) {
@@ -351,6 +370,8 @@ export class Annotator extends EventTarget {
   onDown(e) {
     if (e.button !== 0) return;
     const p = this.toImage(e);
+    const hint = this.hints.length ? this.hintAt(p) : -1;
+    if (hint >= 0) { this.emit('hint-click', { index: hint }); return; }
     if (this.tool === 'text') {
       const hit = this.hitTest(p);
       if (hit && hit.type === 'text') this.emit('text-edit', { id: hit.id, ...hit.props });
@@ -506,6 +527,7 @@ export class Annotator extends EventTarget {
     }
 
     if (ui) {
+      if (this.hints.length) this.drawHints(ctx);
       if (this.draft) this.drawDraft(ctx, this.draft);
       const sel = this.selected;
       if (sel) {
@@ -541,6 +563,29 @@ export class Annotator extends EventTarget {
         ctx.strokeRect(crop.x, crop.y, crop.w, crop.h);
         ctx.restore();
       }
+    }
+    ctx.restore();
+  }
+
+  drawHints(ctx) {
+    const u = this.viewScale();
+    ctx.save();
+    ctx.lineWidth = 2 * u;
+    ctx.setLineDash([6 * u, 4 * u]);
+    ctx.font = `600 ${11 * u}px system-ui, sans-serif`;
+    ctx.textBaseline = 'bottom';
+    for (const h of this.hints) {
+      ctx.fillStyle = 'rgba(247,107,21,.18)';
+      ctx.fillRect(h.x, h.y, h.w, h.h);
+      ctx.strokeStyle = '#f76b15';
+      ctx.strokeRect(h.x, h.y, h.w, h.h);
+      const label = h.kind;
+      const tw = ctx.measureText(label).width + 8 * u;
+      const ty = h.y > 16 * u ? h.y : h.y + h.h + 15 * u;
+      ctx.fillStyle = '#f76b15';
+      ctx.fillRect(h.x, ty - 15 * u, tw, 15 * u);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(label, h.x + 4 * u, ty - 2 * u);
     }
     ctx.restore();
   }

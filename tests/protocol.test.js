@@ -60,3 +60,19 @@ test('validates upload results', () => {
   const bad = { ...m, payload: { results: [{ name: 'a.pdf', ok: 'yes' }] } };
   assert.equal(P.validatePageMessage(evt(bad), win, loc).ok, false);
 });
+
+test('attachment limits from /snap are validated and kept', () => {
+  const withLimits = (limits) => request({ payload: { ...request().payload, context: { ...request().payload.context, limits } } });
+  const ok = P.validatePageMessage(evt(withLimits({ maxBytes: 24 * 1024 * 1024, allowedExtensions: ['pdf', 'png', 'pdf'] })), win, loc);
+  assert.deepEqual(ok.msg.payload.context.limits, { maxBytes: 24 * 1024 * 1024, allowedExtensions: ['pdf', 'png'] });
+  assert.deepEqual(P.validatePageMessage(evt(request()), win, loc).msg.payload.context.limits, {});
+  for (const bad of [{ maxBytes: -1 }, { maxBytes: '10' }, { allowedExtensions: ['.pdf'] }, { allowedExtensions: 'pdf' }, []]) {
+    assert.equal(P.validatePageMessage(evt(withLimits(bad)), win, loc).ok, false, JSON.stringify(bad));
+  }
+});
+
+test('element and session modes are accepted', () => {
+  for (const mode of ['element', 'session']) {
+    assert.equal(P.validatePageMessage(evt(request({ payload: { ...request().payload, mode } })), win, loc).ok, true, mode);
+  }
+});

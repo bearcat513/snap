@@ -1,0 +1,217 @@
+{
+  "cmd_record_pause": {
+    "message": "Pause/resume the current recording"
+  },
+  "cmd_record_toggle": {
+    "message": "Start/stop tab recording"
+  },
+  "cmd_session_toggle": {
+    "message": "Start/finish a capture session"
+  },
+  "cmd_snap_element": {
+    "message": "Screenshot an element"
+  },
+  "cmd_snap_region": {
+    "message": "Screenshot region"
+  },
+  "cmd_snap_visible": {
+    "message": "Screenshot visible area"
+  },
+  "common_cancel": {
+    "message": "Cancel"
+  },
+  "common_library_link": {
+    "message": "Library →"
+  },
+  "common_no_captures": {
+    "message": "No captures yet."
+  },
+  "common_pause": {
+    "message": "Pause"
+  },
+  "common_record": {
+    "message": "Record"
+  },
+  "common_resume": {
+    "message": "Resume"
+  },
+  "common_settings": {
+    "message": "Settings"
+  },
+  "common_stop": {
+    "message": "Stop"
+  },
+  "ext_description": {
+    "message": "Screenshots and recordings with annotation, redaction and context. Save to disk, Amazon S3, issue trackers, or the current ServiceNow record.",
+    "description": "Store/extensions page description"
+  },
+  "ext_name": {
+    "message": "Snap Companion",
+    "description": "Extension name"
+  },
+  "menu_record_tab": {
+    "message": "Record this tab"
+  },
+  "menu_snap_element": {
+    "message": "Snap element…"
+  },
+  "menu_snap_fullpage": {
+    "message": "Snap full page"
+  },
+  "menu_snap_region": {
+    "message": "Snap region…"
+  },
+  "menu_snap_visible": {
+    "message": "Snap visible area"
+  },
+  "popup_continue": {
+    "message": "Continue"
+  },
+  "popup_delay": {
+    "message": "Delay"
+  },
+  "popup_delay_label": {
+    "message": "Capture delay"
+  },
+  "popup_delay_off": {
+    "message": "Off"
+  },
+  "popup_delay_tip": {
+    "message": "Captures $1s after you click"
+  },
+  "popup_devtools": {
+    "message": "Include console errors & failed requests from this tab"
+  },
+  "popup_devtools_failed": {
+    "message": "Could not attach to this tab."
+  },
+  "popup_devtools_title": {
+    "message": "Attaches Chrome's DevTools protocol to this tab. Captures of this tab then include console errors and failed requests (no bodies or headers)."
+  },
+  "popup_element": {
+    "message": "Element"
+  },
+  "popup_finish": {
+    "message": "Finish"
+  },
+  "popup_fullpage": {
+    "message": "Full page"
+  },
+  "popup_paused": {
+    "message": "Paused"
+  },
+  "popup_pending_record": {
+    "message": "$1: start the tab recording"
+  },
+  "popup_pending_shot": {
+    "message": "$1: take the screenshot"
+  },
+  "popup_pending_title": {
+    "message": "ServiceNow request waiting"
+  },
+  "popup_quota": {
+    "message": "Storage is full — clear the library to record again."
+  },
+  "popup_recent": {
+    "message": "Recent"
+  },
+  "popup_record": {
+    "message": "Record"
+  },
+  "popup_recording": {
+    "message": "Recording"
+  },
+  "popup_recording_kind": {
+    "message": "Recording"
+  },
+  "popup_recording_tab": {
+    "message": "Recording tab"
+  },
+  "popup_recording_window": {
+    "message": "Recording window"
+  },
+  "popup_region": {
+    "message": "Region"
+  },
+  "popup_restricted": {
+    "message": "Chrome doesn't allow capturing this page. Window/screen recording still works."
+  },
+  "popup_screenshot": {
+    "message": "Screenshot"
+  },
+  "popup_screenshot_kind": {
+    "message": "Screenshot"
+  },
+  "popup_session_cancel_title": {
+    "message": "Stop collecting; the captures stay in the library"
+  },
+  "popup_session_for": {
+    "message": " for $1"
+  },
+  "popup_session_many": {
+    "message": "$1 captures so far$2. Capture as usual, then finish to edit them as one report."
+  },
+  "popup_session_one": {
+    "message": "1 capture so far$1. Capture as usual, then finish to edit them as one report."
+  },
+  "popup_session_start": {
+    "message": "Start session"
+  },
+  "popup_session_start_title": {
+    "message": "Collect several screenshots and recordings into one report"
+  },
+  "popup_session_title": {
+    "message": "Capture session"
+  },
+  "popup_shortcuts": {
+    "message": "Shortcuts"
+  },
+  "popup_sidepanel": {
+    "message": "Side panel"
+  },
+  "popup_sidepanel_title": {
+    "message": "Recent captures beside the page, to drag into tickets and chats"
+  },
+  "popup_this_tab": {
+    "message": "This tab"
+  },
+  "popup_viewports": {
+    "message": "Viewports"
+  },
+  "popup_viewports_title": {
+    "message": "Capture this page at several widths (Settings → Screenshots)"
+  },
+  "popup_visible": {
+    "message": "Visible"
+  },
+  "popup_window": {
+    "message": "Window / screen"
+  },
+  "recorder_countdown": {
+    "message": "3-2-1 countdown"
+  },
+  "recorder_intro": {
+    "message": "Chrome will ask which window, tab or screen to share. Keep this window open while recording — you can minimise it."
+  },
+  "recorder_mic": {
+    "message": "Include microphone narration"
+  },
+  "recorder_saving": {
+    "message": "Saving recording…"
+  },
+  "recorder_start": {
+    "message": "Choose what to share…"
+  },
+  "recorder_stop": {
+    "message": "Stop & edit"
+  },
+  "recorder_title": {
+    "message": "Record a window or screen"
+  },
+  "sidepanel_intro": {
+    "message": "Drag a capture into a ticket, chat or email next to it. Screenshots include their annotations and redactions."
+  },
+  "sidepanel_title": {
+    "message": "Recent captures"
+  }
+}

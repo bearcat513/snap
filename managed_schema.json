@@ -6,36 +6,87 @@
       "description": "S3 upload configuration. Presign mode is the only mode supported by this build.",
       "type": "object",
       "properties": {
-        "mode": { "type": "string", "enum": ["presign", "cognito"] },
-        "presignEndpoint": { "type": "string", "description": "Full URL the extension POSTs presign requests to, e.g. https://api.example.com/presign" },
-        "auth": { "type": "string", "enum": ["none", "oidc"], "description": "How the extension authenticates to the presign endpoint" },
-        "oidcAuthUrl": { "type": "string", "description": "OIDC authorize URL (implicit flow). {redirect_uri} and {nonce} are substituted." },
-        "cognito": { "type": "object" },
-        "keyPrefix": { "type": "string" }
+        "mode": {
+          "type": "string",
+          "enum": [
+            "presign"
+          ]
+        },
+        "presignEndpoint": {
+          "type": "string",
+          "description": "Full URL the extension POSTs presign requests to, e.g. https://api.example.com/presign"
+        },
+        "auth": {
+          "type": "string",
+          "enum": [
+            "none",
+            "oidc"
+          ],
+          "description": "How the extension authenticates to the presign endpoint"
+        },
+        "oidcAuthUrl": {
+          "type": "string",
+          "description": "OIDC authorize URL (implicit flow). {redirect_uri} and {nonce} are substituted."
+        },
+        "keyPrefix": {
+          "type": "string"
+        }
       }
     },
     "snHosts": {
       "title": "Extra ServiceNow hosts",
       "type": "array",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
     "allowedDestinations": {
       "title": "Allowed destinations",
       "type": "array",
-      "items": { "type": "string", "enum": ["download", "s3", "servicenow"] }
+      "items": {
+        "type": "string",
+        "enum": [
+          "download",
+          "s3",
+          "servicenow",
+          "webhook",
+          "jira",
+          "github"
+        ]
+      }
     },
-    "forceRedactionReminder": { "type": "boolean" },
+    "forceRedactionReminder": {
+      "type": "boolean"
+    },
     "customFields": {
       "title": "Extra context fields",
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "label": { "type": "string" },
-          "type": { "type": "string", "enum": ["text", "textarea", "select"] },
-          "options": { "type": "array", "items": { "type": "string" } },
-          "required": { "type": "boolean" }
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "textarea",
+              "select"
+            ]
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "required": {
+            "type": "boolean"
+          }
         }
       }
     },
@@ -45,15 +96,75 @@
       "items": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "name": { "type": "string" },
-          "description": { "type": "string" },
-          "notes": { "type": "string" },
-          "steps": { "type": "array", "items": { "type": "string" } },
-          "tags": { "type": "array", "items": { "type": "string" } }
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tables": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "ServiceNow tables whose /snap captures get this template automatically"
+          }
         }
       }
     },
-    "recordingMaxMinutes": { "type": "integer" }
+    "recordingMaxMinutes": {
+      "type": "integer"
+    },
+    "redactionPatterns": {
+      "title": "Required redaction patterns",
+      "description": "Extra regular expressions the editor suggests redacting, on top of the built-in email, phone, IP, card and token patterns",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "snWorkNote": {
+      "title": "Post a ServiceNow work note",
+      "description": "After attaching files from /snap, add a work note naming them (and any S3 links)",
+      "type": "boolean"
+    },
+    "webhookUrl": {
+      "type": "string",
+      "description": "Webhook destination URL"
+    },
+    "jiraBaseUrl": {
+      "type": "string",
+      "description": "Jira site URL, e.g. https://acme.atlassian.net"
+    },
+    "jiraProjectKey": {
+      "type": "string",
+      "description": "Jira project key"
+    },
+    "githubApiUrl": {
+      "type": "string",
+      "description": "GitHub API URL (https://api.github.com or GitHub Enterprise)"
+    },
+    "githubRepo": {
+      "type": "string",
+      "description": "GitHub repository, owner/name"
+    }
   }
 }

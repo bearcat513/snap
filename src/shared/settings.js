@@ -1,4 +1,5 @@
-// User settings (chrome.storage.sync) merged with managed policy (chrome.storage.managed), §14.
+// User settings merged with managed policy (chrome.storage.managed), §14. Small settings roam in
+// chrome.storage.sync; large lists and secrets stay in chrome.storage.local (see LOCAL_KEYS).
 
 export const DEFAULTS = {
   defaultScreenshotDestinations: ['download'],
@@ -22,12 +23,34 @@ export const DEFAULTS = {
   snHosts: [],
   fullPageStrategy: 'scroll', // 'scroll' | 'debugger'
   redactionReminder: false,
+  // Suggested redactions found in the page's text at capture time (§6 smart redaction).
+  'redaction.suggest': true,
+  'redaction.patterns': ['email', 'phone', 'ipv4', 'card', 'token'],
+  'redaction.custom': [], // extra regular expressions (strings)
   's3.mode': 'presign',
   's3.presignEndpoint': '',
   's3.auth': 'none', // 'none' | 'oidc'
   's3.oidcAuthUrl': '',
   's3.keyPrefix': '',
   'capture.delaySeconds': 0, // popup screenshots: 0 | 3 | 5 | 10
+  'capture.elementPadding': 8, // CSS px around a captured element
+  'capture.viewports': [375, 768, 1280], // widths for multi-viewport capture
+  'recording.trackClicks': true, // remember what was clicked, for guides
+  'recording.captions': false, // on-device speech recognition of the microphone
+  'gif.fps': 10,
+  'gif.maxWidth': 800,
+  'servicenow.workNote': false, // post a work note after attaching
+  'webhook.url': '',
+  'webhook.token': '',
+  'jira.baseUrl': '',
+  'jira.email': '',
+  'jira.apiToken': '',
+  'jira.projectKey': '',
+  'jira.issueType': 'Bug',
+  'github.apiUrl': 'https://api.github.com',
+  'github.repo': '', // owner/name
+  'github.token': '',
+  'github.attachmentsBranch': '', // commit files here and link them from the issue
   'ui.theme': 'system', // 'system' | 'light' | 'dark'
   'editor.defaultTool': 'arrow',
   'editor.defaultColor': '#e5484d',
@@ -37,7 +60,8 @@ export const DEFAULTS = {
   'editor.palette': ['#e5484d', '#f76b15', '#ffd60a', '#30a46c', '#2563eb', '#111111', '#ffffff'],
   // Extra context fields: [{ id, label, type: 'text' | 'textarea' | 'select', options?: string[], required?: boolean }]
   customFields: [],
-  // Context templates applied from the editor: [{ id, name, description, notes, steps: [], tags: [] }]
+  // Context templates applied from the editor: [{ id, name, description, notes, steps: [], tags: [], tables: [] }]
+  // `tables` auto-applies the template to new /snap captures from those ServiceNow tables.
   templates: [
     {
       id: 'bug',
@@ -46,6 +70,7 @@ export const DEFAULTS = {
       notes: 'Expected:\n\nActual:\n',
       steps: ['Open the record', ''],
       tags: ['bug'],
+      tables: [],
     },
     {
       id: 'uat',
@@ -54,6 +79,7 @@ export const DEFAULTS = {
       notes: 'Test case:\nExpected result:\nActual result:\nSeverity:',
       steps: [],
       tags: ['uat'],
+      tables: [],
     },
     {
       id: 'walkthrough',
@@ -62,12 +88,30 @@ export const DEFAULTS = {
       notes: 'Audience:\nCovers:',
       steps: [],
       tags: ['walkthrough'],
+      tables: [],
     },
   ],
 };
 
 export const BUILTIN_SN_SUFFIXES = ['.service-now.com', '.servicenowservices.com'];
-export const ALL_DESTINATIONS = ['download', 's3', 'servicenow'];
+export const ALL_DESTINATIONS = ['download', 's3', 'servicenow', 'webhook', 'jira', 'github'];
+
+// Kept in chrome.storage.local: lists that can outgrow sync's 8 KB-per-item quota, and credentials,
+// which must never roam to other devices.
+export const LOCAL_KEYS = ['templates', 'customFields', 'webhook.token', 'jira.apiToken', 'github.token'];
+export const SECRET_KEYS = ['webhook.token', 'jira.apiToken', 'github.token'];
+const SYNC_ITEM_LIMIT = 8192; // chrome.storage.sync.QUOTA_BYTES_PER_ITEM
+
+/** Move keys that older versions kept in sync into local storage. Safe to run repeatedly. */
+export async function migrateSettings() {
+  const sync = await chrome.storage.sync.get(LOCAL_KEYS);
+  const keys = Object.keys(sync);
+  if (!keys.length) return;
+  const local = await chrome.storage.local.get(keys);
+  const move = Object.fromEntries(keys.filter((k) => !(k in local)).map((k) => [k, sync[k]]));
+  if (Object.keys(move).length) await chrome.storage.local.set(move);
+  await chrome.storage.sync.remove(keys);
+}
 
 async function getManaged() {
   try {
@@ -79,8 +123,9 @@ async function getManaged() {
 
 /** Returns merged settings. `locked` lists keys controlled by policy; `managedSnHosts` are policy hosts. */
 export async function getSettings() {
-  const [sync, managed] = await Promise.all([chrome.storage.sync.get(null), getManaged()]);
-  const s = { ...DEFAULTS, ...sync };
+  const [sync, local, managed] = await Promise.all([chrome.storage.sync.get(null), chrome.storage.local.get(LOCAL_KEYS), getManaged()]);
+  // Local wins; sync is only read for keys not yet migrated.
+  const s = { ...DEFAULTS, ...sync, ...local };
   const locked = new Set();
 
   if (managed.s3 && typeof managed.s3 === 'object') {
@@ -113,16 +158,53 @@ export async function getSettings() {
     s.templates = managed.templates;
     locked.add('templates');
   }
+  if (Array.isArray(managed.redactionPatterns)) {
+    s['redaction.custom'] = managed.redactionPatterns.map(String);
+    locked.add('redaction.custom');
+  }
+  if (typeof managed.snWorkNote === 'boolean') {
+    s['servicenow.workNote'] = managed.snWorkNote;
+    locked.add('servicenow.workNote');
+  }
+  for (const [policy, key] of [['webhookUrl', 'webhook.url'], ['jiraBaseUrl', 'jira.baseUrl'], ['jiraProjectKey', 'jira.projectKey'], ['githubApiUrl', 'github.apiUrl'], ['githubRepo', 'github.repo']]) {
+    if (typeof managed[policy] === 'string') {
+      s[key] = managed[policy];
+      locked.add(key);
+    }
+  }
+  s['s3.mode'] = 'presign'; // the only mode this build supports
   s.customFields = normalizeCustomFields(s.customFields);
-  s.templates = (Array.isArray(s.templates) ? s.templates : []).filter((t) => t && t.name)
-    .map((t, i) => ({ id: String(t.id || `t${i}`), name: String(t.name), description: t.description || '', notes: t.notes || '',
-      steps: Array.isArray(t.steps) ? t.steps.map(String) : [], tags: Array.isArray(t.tags) ? t.tags.map(String) : [] }));
+  s.templates = normalizeTemplates(s.templates);
   s['editor.palette'] = normalizePalette(s['editor.palette']);
+  s['capture.viewports'] = normalizeViewports(s['capture.viewports']);
   s.locked = [...locked];
   return s;
 }
 
 const HEX = /^#[0-9a-f]{6}$/;
+
+const strList = (v) => (Array.isArray(v) ? v : String(v || '').split(',')).map((x) => String(x).trim()).filter(Boolean);
+
+export function normalizeTemplates(templates) {
+  return (Array.isArray(templates) ? templates : []).filter((t) => t && t.name)
+    .map((t, i) => ({
+      id: String(t.id || `t${i}`), name: String(t.name), description: t.description || '', notes: t.notes || '',
+      steps: Array.isArray(t.steps) ? t.steps.map(String) : [], tags: Array.isArray(t.tags) ? t.tags.map(String) : [],
+      tables: strList(t.tables).map((x) => x.toLowerCase()),
+    }));
+}
+
+/** The template to auto-apply for a ServiceNow table, if any (first match wins). */
+export function templateForTable(templates, table) {
+  if (!table) return null;
+  return (templates || []).find((t) => (t.tables || []).includes(String(table).toLowerCase())) || null;
+}
+
+/** Sorted, de-duplicated widths between 240 and 3840 px (at most 6); the defaults if none are valid. */
+export function normalizeViewports(widths) {
+  const out = [...new Set(strList(widths).map(Number).filter((w) => Number.isInteger(w) && w >= 240 && w <= 3840))].sort((a, b) => a - b);
+  return out.length ? out.slice(0, 6) : [...DEFAULTS['capture.viewports']];
+}
 
 /** Lower-cased, de-duplicated #rrggbb colors (at most 16); the default palette if none are valid. */
 export function normalizePalette(colors) {
@@ -140,14 +222,33 @@ export function recordingQuality(settings) {
   return { maxWidth, maxHeight, fps, videoBitsPerSecond: Math.round(mbps * 1_000_000) };
 }
 
+/** Bytes chrome.storage.sync counts for one item (key + JSON value). */
+export function syncItemBytes(key, value) {
+  return new TextEncoder().encode(key + JSON.stringify(value)).length;
+}
+
 export async function setSettings(patch) {
   const current = await getSettings();
-  const clean = {};
+  const sync = {};
+  const local = {};
   for (const [k, v] of Object.entries(patch)) {
-    if (!current.locked.includes(k) && k in DEFAULTS) clean[k] = v;
+    if (current.locked.includes(k) || !(k in DEFAULTS)) continue;
+    (LOCAL_KEYS.includes(k) ? local : sync)[k] = v;
   }
-  if (clean.snHosts) clean.snHosts = clean.snHosts.map(normalizeHost).filter((h) => h && !current.managedSnHosts.includes(h));
-  await chrome.storage.sync.set(clean);
+  if (sync.snHosts) sync.snHosts = sync.snHosts.map(normalizeHost).filter((h) => h && !current.managedSnHosts.includes(h));
+  const big = Object.entries(sync).find(([k, v]) => syncItemBytes(k, v) > SYNC_ITEM_LIMIT);
+  if (big) throw new Error(`"${big[0]}" is too large to sync (over 8 KB). Shorten it and try again.`);
+  if (Object.keys(local).length) {
+    await chrome.storage.local.set(local);
+    await chrome.storage.sync.remove(Object.keys(local)).catch(() => {});
+  }
+  if (Object.keys(sync).length) {
+    try {
+      await chrome.storage.sync.set(sync);
+    } catch (err) {
+      throw new Error(/QUOTA/i.test(err.message) ? 'Chrome sync storage is full. Remove some palette colors or hosts, or shorten long settings.' : err.message);
+    }
+  }
 }
 
 export function normalizeCustomFields(fields) {

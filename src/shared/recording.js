@@ -4,6 +4,7 @@
 import { appendChunk, saveCapture } from './db.js';
 import { finalizeRecording } from './captures.js';
 import { updateJob } from './jobs.js';
+import { startCaptions } from './captions.js';
 
 const MIME_CANDIDATES = [
   'video/mp4;codecs=avc1,mp4a.40.2',
@@ -47,6 +48,7 @@ async function mixAudio(stream, { mic, playback }) {
   const tracks = [...stream.getVideoTracks(), ...(hasAudio ? dest.stream.getAudioTracks() : [])];
   return {
     stream: new MediaStream(tracks),
+    micTrack: micStream?.getAudioTracks()[0] || null,
     warnings,
     cleanup() {
       micStream?.getTracks().forEach((t) => t.stop());
@@ -81,7 +83,7 @@ async function grabFrame(stream) {
 
 /**
  * Start recording `stream`. Returns controls plus `done`, a promise for the finished capture.
- * opts: { mic, maxMinutes, playback, videoBitsPerSecond }
+ * opts: { mic, captions, maxMinutes, playback, videoBitsPerSecond }
  */
 export async function startRecording({ jobId, stream, opts = {}, source, servicenow }) {
   const mix = await mixAudio(stream, { mic: !!opts.mic, playback: !!opts.playback });
@@ -121,10 +123,23 @@ export async function startRecording({ jobId, stream, opts = {}, source, service
   startedAt = performance.now();
   if (opts.maxMinutes > 0) maxTimer = setTimeout(stop, opts.maxMinutes * 60_000);
 
+  // On-device captions from the microphone (§6); recording time excludes pauses.
+  let captions = null;
+  if (opts.captions && mix.micTrack) {
+    try {
+      captions = await startCaptions(mix.micTrack, () => (pausedAt ? null : performance.now() - startedAt - pausedTotal));
+    } catch (err) {
+      mix.warnings.push(err.message);
+    }
+  } else if (opts.captions) {
+    mix.warnings.push('Captions need the microphone: turn on narration for this recording.');
+  }
+
   await updateJob(jobId, { state: 'recording', mimeType: recorder.mimeType || mimeType, source, servicenow });
 
   const done = stopped.then(async () => {
     clearTimeout(maxTimer);
+    const cues = captions?.stop() || [];
     const end = performance.now();
     if (pausedAt) pausedTotal += end - pausedAt;
     stream.getTracks().forEach((t) => t.stop());
@@ -139,7 +154,8 @@ export async function startRecording({ jobId, stream, opts = {}, source, service
       capture.warnings = [`Recording stopped early: ${writeError.name === 'QuotaExceededError' ? 'storage is full — clear the library' : writeError.message}`];
     }
     if (mix.warnings.length) capture.warnings = [...(capture.warnings || []), ...mix.warnings];
-    if (capture.warnings) await saveCapture(capture);
+    if (cues.length) capture.captions = cues;
+    if (capture.warnings || cues.length) await saveCapture(capture);
     return { capture, quotaExceeded: writeError?.name === 'QuotaExceededError' };
   });
 

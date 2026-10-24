@@ -27,6 +27,31 @@ export async function thumbnailFromSource(source, maxW = 360) {
   return canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
 }
 
+/** Up to four images tiled 2×2 (one fills the frame, two sit side by side) on a neutral background. */
+export async function gridThumbnail(blobs, w = 360, h = 225) {
+  const canvas = new OffscreenCanvas(w, h);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#e6e8ec';
+  ctx.fillRect(0, 0, w, h);
+  const n = Math.min(4, blobs.length);
+  const cols = n === 1 ? 1 : 2;
+  const rows = n <= 2 ? 1 : 2;
+  const gap = 4;
+  const cw = (w - gap * (cols + 1)) / cols;
+  const ch = (h - gap * (rows + 1)) / rows;
+  for (let i = 0; i < n; i++) {
+    const bmp = await createImageBitmap(blobs[i]);
+    const scale = Math.max(cw / bmp.width, ch / bmp.height); // cover
+    const sw = cw / scale;
+    const sh = ch / scale;
+    const x = gap + (i % cols) * (cw + gap);
+    const y = gap + Math.floor(i / cols) * (ch + gap);
+    ctx.drawImage(bmp, (bmp.width - sw) / 2, 0, sw, sh, x, y, cw, ch);
+    bmp.close();
+  }
+  return canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
+}
+
 export async function imageSize(blob) {
   const bmp = await createImageBitmap(blob);
   const size = { width: bmp.width, height: bmp.height };

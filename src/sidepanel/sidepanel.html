@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Snap Companion</title>
+  <link rel="stylesheet" href="../ui/common.css">
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header>
+    <img src="../../icons/32.png" alt="" width="18" height="18">
+    <h1 data-i18n="sidepanel_title">Recent captures</h1>
+    <button id="btn-library" class="ghost small" data-i18n="common_library_link">Library →</button>
+  </header>
+  <p class="small muted" data-i18n="sidepanel_intro">Drag a capture into a ticket, chat or email next to it. Screenshots include their annotations and redactions.</p>
+  <ul id="list" class="list"></ul>
+  <p id="empty" class="muted small" data-i18n="common_no_captures" hidden>No captures yet.</p>
+  <div id="toast" class="toast" role="status"></div>
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>

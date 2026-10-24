@@ -1,7 +1,9 @@
 // Screenshot capture (§6.1–6.3): visible area, region, full page.
 
-import { createScreenshotCapture } from '../shared/captures.js';
+import { createScreenshotCapture, createSessionCapture } from '../shared/captures.js';
 import { cropBlob, stitchTiles } from '../shared/image.js';
+import { updateCapture } from '../shared/db.js';
+import { withDebugger } from './devtools.js';
 import { getSettings } from '../shared/settings.js';
 import { sleep, base64ToBytes } from '../shared/util.js';
 
@@ -29,12 +31,46 @@ async function exec(tabId, func, args = []) {
   return res?.result;
 }
 
+// ---------- suggested redactions (§6 smart redaction) ----------
+
+/** Scan the page for sensitive text. Returns the content script's result, or null (off / no access). */
+async function findSensitive(tab, scope = 'viewport') {
+  const settings = await getSettings();
+  if (!settings['redaction.suggest']) return null;
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['src/shared/sensitive.js', 'src/content/sensitive-scan.js'] });
+    return await exec(tab.id, (o) => window.__snapFindSensitive(o), [{ patterns: settings['redaction.patterns'], custom: settings['redaction.custom'], scope }]);
+  } catch {
+    return null; // e.g. no host access to this page; suggestions are optional
+  }
+}
+
+/**
+ * Map scan rects (client CSS px) into image pixels: subtract the origin (ox, oy), keep what overlaps
+ * the clip (CSS px, relative to that origin), and scale.
+ */
+export function suggestionsToImage(scan, { scale, ox = 0, oy = 0, clip }) {
+  if (!scan?.rects?.length) return [];
+  const out = [];
+  for (const r of scan.rects) {
+    const x0 = Math.max(0, r.x - ox);
+    const y0 = Math.max(0, r.y - oy);
+    const x1 = Math.min(clip.w, r.x - ox + r.w);
+    const y1 = Math.min(clip.h, r.y - oy + r.h);
+    if (x1 - x0 < 2 || y1 - y0 < 2) continue;
+    out.push({ x: Math.round(x0 * scale), y: Math.round(y0 * scale), w: Math.round((x1 - x0) * scale), h: Math.round((y1 - y0) * scale), kind: r.kind });
+  }
+  return out;
+}
+
 export async function snapVisible(tab, extra = {}) {
+  const scan = await findSensitive(tab);
   const blob = await dataUrlToBlob(await captureVisibleDataUrl(tab.windowId));
   const bmp = await createImageBitmap(blob);
   const dpr = tab.width ? bmp.width / tab.width : 1;
+  const suggestions = scan ? suggestionsToImage(scan, { scale: bmp.width / scan.vw, clip: { w: scan.vw, h: scan.vh } }) : [];
   bmp.close();
-  return createScreenshotCapture({ blob, source: sourceFromTab(tab, { dpr }), ...extra });
+  return createScreenshotCapture({ blob, source: sourceFromTab(tab, { dpr }), suggestions, ...extra });
 }
 
 /** Returns the capture, or null if the user pressed Esc. */
@@ -42,8 +78,25 @@ export async function snapRegion(tab, extra = {}) {
   // Capture first so the selection overlay isn't in the image (§6.2).
   const dataUrl = await captureVisibleDataUrl(tab.windowId);
   await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['src/content/region-select.js'] });
+  const scan = await findSensitive(tab);
   const sel = await exec(tab.id, (url) => window.__snapRegionSelect(url), [dataUrl]);
   if (!sel) return null;
+  return cropToSelection(tab, dataUrl, sel, scan, extra);
+}
+
+/** Click an element to capture just its bounds. Returns the capture, or null on Esc. */
+export async function snapElement(tab, extra = {}) {
+  const settings = await getSettings();
+  await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['src/content/element-select.js'] });
+  const sel = await exec(tab.id, (pad) => window.__snapElementSelect(pad), [Math.max(0, Number(settings['capture.elementPadding']) || 0)]);
+  if (!sel) return null;
+  // The picker is gone now; scan and capture the page as it looks.
+  const scan = await findSensitive(tab);
+  const dataUrl = await captureVisibleDataUrl(tab.windowId);
+  return cropToSelection(tab, dataUrl, sel, scan, extra);
+}
+
+async function cropToSelection(tab, dataUrl, sel, scan, extra) {
   const blob = await dataUrlToBlob(dataUrl);
   const bmp = await createImageBitmap(blob);
   const scale = bmp.width / sel.vw;
@@ -52,6 +105,7 @@ export async function snapRegion(tab, extra = {}) {
   return createScreenshotCapture({
     blob: cropped,
     source: sourceFromTab(tab, { dpr: scale, width: Math.round(sel.w), height: Math.round(sel.h) }),
+    suggestions: suggestionsToImage(scan, { scale, ox: sel.x, oy: sel.y, clip: { w: sel.w, h: sel.h } }),
     ...extra,
   });
 }
@@ -68,6 +122,7 @@ async function fullPageViaScroll(tab) {
   await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['src/content/fullpage.js'] });
   const info = await exec(tab.id, () => window.__snapFullPage.prepare());
   if (!info) throw new Error('Could not find a scrollable area on this page.');
+  const scan = await findSensitive(tab, 'all');
 
   const tiles = [];
   try {
@@ -95,6 +150,8 @@ async function fullPageViaScroll(tab) {
     return {
       blob,
       source: sourceFromTab(tab, { dpr, width: Math.round(info.rect.w), height: Math.round(totalHeight), fullPage: true }),
+      // Stitched image y = client y − scroller top + the scroll offset at scan time.
+      suggestions: suggestionsToImage(scan, { scale: dpr, ox: info.rect.x, oy: info.rect.y - info.top, clip: { w: info.rect.w, h: Math.min(totalHeight, MAX_PX / dpr) } }),
     };
   } finally {
     await exec(tab.id, () => window.__snapFullPage.restore()).catch(() => {});
@@ -102,9 +159,8 @@ async function fullPageViaScroll(tab) {
 }
 
 async function fullPageViaDebugger(tab) {
-  const target = { tabId: tab.id };
-  await chrome.debugger.attach(target, '1.3');
-  try {
+  const scan = await findSensitive(tab, 'all');
+  return withDebugger(tab.id, async (target) => {
     const metrics = await chrome.debugger.sendCommand(target, 'Page.getLayoutMetrics');
     const size = metrics.cssContentSize || metrics.contentSize;
     const vp = metrics.cssLayoutViewport || metrics.layoutViewport;
@@ -120,10 +176,47 @@ async function fullPageViaDebugger(tab) {
     return {
       blob,
       source: sourceFromTab(tab, { dpr, width: Math.round(vp?.clientWidth || size.width), height: Math.round(height), fullPage: true }),
+      // Document coordinates = client + scroll offset.
+      suggestions: scan ? suggestionsToImage(scan, { scale: dpr, ox: -scan.scrollX, oy: -scan.scrollY, clip: { w: size.width, h: height } }) : [],
     };
-  } finally {
-    await chrome.debugger.detach(target).catch(() => {});
-  }
+  });
+}
+
+/**
+ * Multi-viewport capture (§6): the page at each width in Settings → Screenshots, emulated through the
+ * DevTools protocol, grouped as a session. Returns the session capture.
+ */
+export async function snapViewports(tab) {
+  if (!(await chrome.permissions.contains({ permissions: ['debugger'] }))) throw new Error('Viewport capture needs the "debugger" permission (Settings → Screenshots).');
+  const settings = await getSettings();
+  const members = [];
+  await withDebugger(tab.id, async (target) => {
+    try {
+      const metrics = await chrome.debugger.sendCommand(target, 'Page.getLayoutMetrics');
+      const height = Math.round((metrics.cssLayoutViewport || metrics.layoutViewport).clientHeight);
+      for (const width of settings['capture.viewports']) {
+        await chrome.debugger.sendCommand(target, 'Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 0, mobile: width < 768 });
+        await sleep(700); // layout, media queries, lazy images
+        const scan = await findSensitive(tab);
+        const { data } = await chrome.debugger.sendCommand(target, 'Page.captureScreenshot', { format: 'png' });
+        const blob = new Blob([base64ToBytes(data)], { type: 'image/png' });
+        const bmp = await createImageBitmap(blob);
+        const dpr = bmp.width / width;
+        const suggestions = scan ? suggestionsToImage(scan, { scale: bmp.width / scan.vw, clip: { w: scan.vw, h: scan.vh } }) : [];
+        bmp.close();
+        const capture = await createScreenshotCapture({
+          blob, suggestions, title: `${(tab.title || 'Page').slice(0, 100)} — ${width}px`,
+          source: sourceFromTab(tab, { dpr, width, height, viewport: width }),
+        });
+        members.push(capture.id);
+      }
+    } finally {
+      await chrome.debugger.sendCommand(target, 'Emulation.clearDeviceMetricsOverride').catch(() => {});
+    }
+  });
+  const session = await createSessionCapture({ members, title: `${(tab.title || 'Page').slice(0, 100)} — ${members.length} viewports` });
+  for (const id of members) await updateCapture(id, (c) => { c.sessionId = session.id; });
+  return session;
 }
 
 /** Run the 3-2-1 countdown overlay in the page (tab recording, §6.6). Resolves when it's gone. */

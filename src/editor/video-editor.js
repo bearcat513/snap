@@ -6,6 +6,7 @@ import { redactRegion, clampRegion } from './redact.js';
 import { FrameGrabber, activeRedactions } from './video-tools.js';
 import { formatDuration } from '../shared/util.js';
 import { el, confirmDialog } from './ui.js';
+import { guideSteps, frameTimeFor } from '../shared/guide.js';
 
 const MIN_TRIM_MS = 300;
 const AUTO_KEYFRAMES = 4;
@@ -288,6 +289,27 @@ export class VideoEditor extends EventTarget {
     this.changed();
   }
 
+  /**
+   * Step-by-step guide from the clicks recorded in the tab: a keyframe just before each click (the
+   * PDF marks the click point and captions the step). Returns the steps' text, or null if cancelled.
+   */
+  async generateGuide() {
+    const [s, e] = this.range();
+    const steps = guideSteps(this.capture.clicks, [s, e]);
+    if (!steps.length) return [];
+    if (this.keyframes.length) {
+      const ok = await confirmDialog({ title: 'Replace keyframes?', message: `Replace the ${this.keyframes.length} keyframe(s) with ${steps.length} from the recorded clicks?`, ok: 'Replace' });
+      if (!ok) return null;
+    }
+    this.keyframes = steps.map((st, i) => ({
+      id: crypto.randomUUID(),
+      timeMs: frameTimeFor(st, s),
+      step: { n: i + 1, text: st.text, fx: st.fx, fy: st.fy },
+    }));
+    this.changed();
+    return steps.map((st) => st.text);
+  }
+
   // ---------------- timeline
 
   pct(ms) {
@@ -352,7 +374,7 @@ export class VideoEditor extends EventTarget {
     this.$('keyframes-empty').hidden = this.keyframes.length > 0;
     list.replaceChildren(...this.keyframes.map((k) => el('li', { 'data-id': k.id },
       el('button', { class: 'kf-thumb', title: 'Go to keyframe', onclick: () => { this.video.currentTime = k.timeMs / 1000; } }, el('span', { class: 'ph' })),
-      el('span', { class: 'small', text: fmt(k.timeMs - s) }),
+      el('span', { class: 'small', text: k.step ? `${k.step.n}. ${k.step.text}` : fmt(k.timeMs - s), title: fmt(k.timeMs - s) }),
       el('button', {
         class: 'ghost icon', 'aria-label': `Remove keyframe at ${fmt(k.timeMs)}`,
         onclick: () => { this.keyframes = this.keyframes.filter((x) => x.id !== k.id); this.changed(); },
@@ -406,6 +428,7 @@ export class VideoEditor extends EventTarget {
     this.$('btn-clear-trim').addEventListener('click', () => this.setTrim(0, this.durationMs));
     this.$('btn-add-key').addEventListener('click', () => this.addKeyframe());
     this.$('btn-auto-keys').addEventListener('click', () => this.autoKeyframes());
+    this.$('btn-guide').hidden = !this.capture.clicks?.length;
     this.$('btn-redact-video').addEventListener('click', () => this.setRedactMode(!this.redactMode));
     this.$('video-blur-mode').addEventListener('change', (e) => { this.blurMode = e.target.value; });
     this.renderKeyframeThumbs();

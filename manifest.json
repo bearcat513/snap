@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Snap Companion",
+  "name": "__MSG_ext_name__",
   "version": "0.1.0",
-  "description": "Screenshots and recordings with annotation, redaction and context. Save to disk, Amazon S3, or the current ServiceNow record.",
+  "description": "__MSG_ext_description__",
+  "default_locale": "en",
   "minimum_chrome_version": "116",
   "icons": {
     "16": "icons/16.png",
@@ -12,10 +13,19 @@
   },
   "action": {
     "default_popup": "src/popup/popup.html",
-    "default_title": "Snap Companion",
-    "default_icon": { "16": "icons/16.png", "32": "icons/32.png" }
+    "default_title": "__MSG_ext_name__",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png"
+    }
   },
-  "background": { "service_worker": "src/background/sw.js", "type": "module" },
+  "background": {
+    "service_worker": "src/background/sw.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "src/sidepanel/sidepanel.html"
+  },
   "permissions": [
     "activeTab",
     "tabCapture",
@@ -24,31 +34,81 @@
     "unlimitedStorage",
     "downloads",
     "scripting",
-    "contextMenus"
+    "contextMenus",
+    "sidePanel"
   ],
-  "optional_permissions": ["identity", "debugger"],
-  "host_permissions": ["https://*.service-now.com/*", "https://*.servicenowservices.com/*"],
-  "optional_host_permissions": ["https://*/*", "<all_urls>"],
+  "optional_permissions": [
+    "identity",
+    "debugger"
+  ],
+  "host_permissions": [
+    "https://*.service-now.com/*",
+    "https://*.servicenowservices.com/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "<all_urls>"
+  ],
   "content_scripts": [
     {
-      "matches": ["https://*.service-now.com/*", "https://*.servicenowservices.com/*"],
-      "js": ["src/shared/protocol.js", "src/content/content.js"],
+      "matches": [
+        "https://*.service-now.com/*",
+        "https://*.servicenowservices.com/*"
+      ],
+      "js": [
+        "src/shared/protocol.js",
+        "src/content/content.js"
+      ],
       "run_at": "document_idle",
       "all_frames": true
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["src/bridge/bridge.html", "src/bridge/bridge.js"],
-      "matches": ["https://*.service-now.com/*", "https://*.servicenowservices.com/*"]
+      "resources": [
+        "src/bridge/bridge.html",
+        "src/bridge/bridge.js"
+      ],
+      "matches": [
+        "https://*.service-now.com/*",
+        "https://*.servicenowservices.com/*"
+      ]
     }
   ],
   "commands": {
-    "snap-visible": { "suggested_key": { "default": "Alt+Shift+S" }, "description": "Screenshot visible area" },
-    "snap-region": { "suggested_key": { "default": "Alt+Shift+A" }, "description": "Screenshot region" },
-    "record-toggle": { "suggested_key": { "default": "Alt+Shift+R" }, "description": "Start/stop tab recording" },
-    "record-pause": { "suggested_key": { "default": "Alt+Shift+P" }, "description": "Pause/resume the current recording" }
+    "snap-visible": {
+      "suggested_key": {
+        "default": "Alt+Shift+S"
+      },
+      "description": "__MSG_cmd_snap_visible__"
+    },
+    "snap-region": {
+      "suggested_key": {
+        "default": "Alt+Shift+A"
+      },
+      "description": "__MSG_cmd_snap_region__"
+    },
+    "snap-element": {
+      "description": "__MSG_cmd_snap_element__"
+    },
+    "record-toggle": {
+      "suggested_key": {
+        "default": "Alt+Shift+R"
+      },
+      "description": "__MSG_cmd_record_toggle__"
+    },
+    "record-pause": {
+      "suggested_key": {
+        "default": "Alt+Shift+P"
+      },
+      "description": "__MSG_cmd_record_pause__"
+    },
+    "session-toggle": {
+      "description": "__MSG_cmd_session_toggle__"
+    }
   },
   "options_page": "src/options/options.html",
-  "storage": { "managed_schema": "managed_schema.json" }
+  "storage": {
+    "managed_schema": "managed_schema.json"
+  }
 }

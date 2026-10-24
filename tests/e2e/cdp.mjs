@@ -14,7 +14,9 @@ export async function launch({ extraArgs = [], scratch, downloadDir }) {
   const chrome = spawn(bin, [
     '--headless=new', `--user-data-dir=${profile}`, '--remote-debugging-pipe', '--enable-unsafe-extension-debugging',
     '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream',
-    '--auto-accept-this-tab-capture', '--window-size=1280,800', ...extraArgs, 'about:blank',
+    '--auto-accept-this-tab-capture', '--window-size=1280,800', ...extraArgs,
+    // CHROME_ARGS="--no-sandbox" etc. for CI containers.
+    ...(process.env.CHROME_ARGS || '').split(/\s+/).filter(Boolean), 'about:blank',
   ], { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] });
   const out = chrome.stdio[3];
   const inp = chrome.stdio[4];

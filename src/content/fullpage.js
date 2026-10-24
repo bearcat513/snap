@@ -80,6 +80,7 @@
       return {
         rect: { x: rect.x, y: rect.y, w: rect.w, h: Math.min(rect.h, innerHeight - rect.y) },
         scrollHeight: found.el.scrollHeight,
+        top: found.el.scrollTop,
         vw: innerWidth,
         vh: innerHeight,
       };

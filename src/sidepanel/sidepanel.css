@@ -1,0 +1,14 @@
+body { padding: 12px 12px 24px; background: var(--bg); }
+header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+header h1 { font-size: 14px; flex: 1; }
+.list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+.item { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.item[draggable="true"] { cursor: grab; }
+.item.dragging { opacity: .5; }
+.item .thumb { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+.item .ph { display: grid; place-items: center; font-size: 26px; color: var(--muted); }
+.item .body { padding: 6px 8px; display: grid; gap: 4px; }
+.item .title { font-weight: 600; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .row { display: flex; gap: 6px; align-items: center; }
+.item .row .spacer { flex: 1; }
+.toast { position: fixed; left: 12px; right: 12px; bottom: 12px; }

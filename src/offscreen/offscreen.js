@@ -1,6 +1,9 @@
 // Offscreen document: holds the tab-capture MediaStream and MediaRecorder (§6.4).
 
 import { startRecording } from '../shared/recording.js';
+import { installErrorLogging } from '../shared/diagnostics.js';
+
+installErrorLogging('offscreen');
 
 let current = null;
 

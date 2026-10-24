@@ -83,6 +83,7 @@ function binaryStringToBytes(s) {
 /**
  * blocks: Array of
  *   { type: 'title', text }
+ *   { type: 'heading', text, newPage? }        section heading (bold 13 pt)
  *   { type: 'meta', text }                     small grey line(s)
  *   { type: 'field', label, text }
  *   { type: 'list', label, items: string[] }   numbered
@@ -117,6 +118,15 @@ export function buildPdf({ pageSize = 'letter', blocks, title = 'Capture', creat
         y -= 18;
         text(line, MARGIN, 18, { bold: true });
         y -= 6;
+      }
+      y -= 2;
+    } else if (b.type === 'heading') {
+      if (b.newPage && page.ops.length) newPage();
+      for (const line of wrapText(b.text, 13, contentW, true)) {
+        ensure(40);
+        y -= 16;
+        text(line, MARGIN, 13, { bold: true });
+        y -= 4;
       }
       y -= 2;
     } else if (b.type === 'meta') {

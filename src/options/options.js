@@ -1,10 +1,15 @@
-// Options page (§14). Inputs with data-key bind to chrome.storage.sync; managed keys are locked.
+// Options page (§14). Inputs with data-key bind to settings (sync or local storage); managed keys are locked.
 
 import { getSettings, setSettings, normalizeHost, isBuiltinSnHost, customSnHosts, DEFAULTS } from '../shared/settings.js';
 import { buildFileName } from '../shared/naming.js';
 import { endpointOrigin } from '../storage/s3.js';
 import { formatBytes } from '../shared/util.js';
+import { recentErrors, clearDiagnostics, sanitizeSettings, installErrorLogging } from '../shared/diagnostics.js';
+import { onDeviceStatus, installOnDevice } from '../shared/captions.js';
+import { browserLabel } from '../shared/captures.js';
 import '../ui/theme.js';
+
+installErrorLogging('options');
 
 const $ = (id) => document.getElementById(id);
 let settings = await getSettings();
@@ -26,6 +31,8 @@ function render() {
     const value = settings[key];
     if (input.dataset.value) input.checked = Array.isArray(value) && value.includes(input.dataset.value);
     else if (input.type === 'checkbox') input.checked = !!value;
+    else if ('list' in input.dataset) input.value = (value || []).join(', ');
+    else if ('lines' in input.dataset) input.value = (value || []).join('\n');
     else input.value = value ?? '';
     const locked = settings.locked.includes(key);
     input.disabled = locked;
@@ -52,7 +59,14 @@ async function onChange(e) {
   if (input.dataset.value) {
     value = [...document.querySelectorAll(`[data-key="${key}"][data-value]`)].filter((i) => i.checked).map((i) => i.dataset.value);
   } else if (input.type === 'checkbox') value = input.checked;
-  else if (input.type === 'number' || 'number' in input.dataset) {
+  else if ('list' in input.dataset) {
+    value = input.value.split(',').map((x) => x.trim()).filter(Boolean);
+    if ('number' in input.dataset) value = value.map(Number);
+  } else if ('lines' in input.dataset) {
+    value = input.value.split('\n').map((x) => x.trim()).filter(Boolean);
+    const bad = value.find((src) => { try { new RegExp(src); return false; } catch { return true; } });
+    if (bad) { toast(`Not a valid regular expression: ${bad}`); return; }
+  } else if (input.type === 'number' || 'number' in input.dataset) {
     value = Number(input.value);
     if (!Number.isFinite(value) || value < Number(input.min || 0)) { input.value = settings[key]; return; }
   } else value = input.value.trim();
@@ -67,7 +81,12 @@ async function onChange(e) {
     if (!ok) { input.value = 'none'; toast('The identity permission is needed for OIDC sign-in.'); return; }
   }
 
-  await setSettings({ [key]: value });
+  try {
+    await setSettings({ [key]: value });
+  } catch (err) {
+    toast(`Not saved: ${err.message}`);
+    return;
+  }
   settings = await getSettings();
   render();
   toast('Saved');
@@ -77,9 +96,28 @@ document.addEventListener('change', onChange);
 document.querySelectorAll('input[type="text"][data-key], input[type="url"][data-key]').forEach((i) => i.addEventListener('input', updatePreview));
 
 function updatePreview() {
-  const pattern = document.querySelector('[data-key="fileNamePattern"]').value || settings.fileNamePattern;
-  $('name-preview').textContent = buildFileName(pattern, { table: 'incident', label: 'INC0012345', host: 'acme.service-now.com', title: 'Example' }, new Date(), 'pdf');
+  const sn = $('pattern-sn').value || settings.fileNamePattern;
+  const other = $('pattern-fallback').value || settings.fallbackFileNamePattern;
+  $('name-preview').textContent = buildFileName(sn, { table: 'incident', label: 'INC0012345', host: 'acme.service-now.com', title: 'Example' }, new Date(), 'pdf');
+  $('fallback-preview').textContent = buildFileName(other, { table: '', label: '', host: 'www.example.com', title: 'Example' }, new Date(), 'png');
 }
+
+// Token chips insert into whichever pattern field was used last, at the cursor.
+let lastPattern = $('pattern-sn');
+for (const id of ['pattern-sn', 'pattern-fallback']) {
+  for (const ev of ['focus', 'input']) $(id).addEventListener(ev, () => { lastPattern = $(id); });
+}
+document.querySelectorAll('[data-token]').forEach((chip) => chip.addEventListener('click', () => {
+  const input = lastPattern;
+  if (input.disabled) return;
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? start;
+  input.value = `${input.value.slice(0, start)}${chip.dataset.token}${input.value.slice(end)}`;
+  input.focus();
+  input.setSelectionRange(start + chip.dataset.token.length, start + chip.dataset.token.length);
+  updatePreview();
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+}));
 
 // ---------- custom fields & templates ----------
 
@@ -106,7 +144,7 @@ function saveList(key, value) {
       settings = await getSettings();
       toast('Saved');
     } catch (err) {
-      toast(/QUOTA/i.test(err.message) ? 'Too much text to sync — shorten the templates.' : `Not saved: ${err.message}`);
+      toast(`Not saved: ${err.message}`);
     }
   }, 400);
 }
@@ -145,6 +183,8 @@ function renderTemplates() {
     h('div', { class: 'tpl-grid' },
       h('label', {}, h('span', { text: 'Name' }), h('input', { type: 'text', value: t.name, disabled: locked, oninput: (e) => { t.name = e.target.value; save(); } })),
       h('label', {}, h('span', { text: 'Tags (comma separated)' }), h('input', { type: 'text', value: (t.tags || []).join(', '), disabled: locked, oninput: (e) => { t.tags = e.target.value.split(',').map((x) => x.trim()).filter(Boolean); save(); } })),
+      h('label', { class: 'wide' }, h('span', { text: 'Apply automatically to /snap captures from these tables (comma separated, optional)' }),
+        h('input', { type: 'text', placeholder: 'incident, problem', value: (t.tables || []).join(', '), disabled: locked, oninput: (e) => { t.tables = e.target.value.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean); save(); } })),
       h('label', { class: 'wide' }, h('span', { text: 'Description' }), h('input', { type: 'text', value: t.description, disabled: locked, oninput: (e) => { t.description = e.target.value; save(); } })),
       h('label', {}, h('span', { text: 'Notes' }), h('textarea', { rows: 4, value: t.notes, disabled: locked, oninput: (e) => { t.notes = e.target.value; save(); } })),
       h('label', {}, h('span', { text: 'Steps (one per line)' }), h('textarea', { rows: 4, value: (t.steps || []).join('\n'), disabled: locked, oninput: (e) => { t.steps = e.target.value.split('\n'); save(); } }))),
@@ -152,7 +192,7 @@ function renderTemplates() {
   if (!templates.length) $('templates').append(h('li', { class: 'muted small', text: 'No templates.' }));
 }
 $('btn-add-template').addEventListener('click', () => {
-  templates.push({ id: crypto.randomUUID().slice(0, 8), name: 'New template', description: '', notes: '', steps: [], tags: [] });
+  templates.push({ id: crypto.randomUUID().slice(0, 8), name: 'New template', description: '', notes: '', steps: [], tags: [], tables: [] });
   renderTemplates();
 });
 
@@ -296,6 +336,60 @@ chrome.storage.onChanged.addListener(async () => {
   settings = await getSettings();
   s3Status();
 });
+
+// ---------- on-device speech (captions) ----------
+
+async function speechStatus() {
+  const st = await onDeviceStatus();
+  const text = {
+    available: 'On-device speech recognition is ready.',
+    downloadable: 'The speech model for your language needs downloading.',
+    downloading: 'Downloading the speech model…',
+    unavailable: "On-device recognition isn't available for your language.",
+    unsupported: "This browser doesn't support on-device speech recognition.",
+  }[st] || st;
+  $('speech-status').textContent = text;
+  $('btn-speech').hidden = !['downloadable', 'downloading'].includes(st);
+  $('btn-speech').disabled = st === 'downloading';
+}
+$('btn-speech').addEventListener('click', async () => {
+  $('speech-status').textContent = 'Downloading the speech model…';
+  const ok = await installOnDevice();
+  toast(ok ? 'Speech model installed' : 'The speech model could not be installed');
+  speechStatus();
+});
+speechStatus();
+
+// ---------- about & diagnostics ----------
+
+$('version').textContent = chrome.runtime.getManifest().version;
+$('browser').textContent = browserLabel();
+
+async function renderDiagnostics() {
+  const errors = await recentErrors();
+  $('diag-status').textContent = errors.length ? `${errors.length} recent error${errors.length === 1 ? '' : 's'}` : 'No errors recorded.';
+  $('btn-diag-clear').disabled = !errors.length;
+  $('diag-list').replaceChildren(...errors.slice(-10).reverse().map((e) => h('li', {},
+    h('span', { class: 'src', text: `${new Date(e.at).toLocaleString()} · ${e.source}` }), e.message)));
+}
+$('btn-diag-copy').addEventListener('click', async () => {
+  const report = {
+    extension: chrome.runtime.getManifest().version,
+    browser: browserLabel(),
+    platform: navigator.userAgentData?.platform || navigator.platform,
+    generatedAt: new Date().toISOString(),
+    settings: sanitizeSettings(settings),
+    errors: await recentErrors(),
+  };
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
+    toast('Diagnostics copied');
+  } catch (err) {
+    toast(`Copy failed: ${err.message}`);
+  }
+});
+$('btn-diag-clear').addEventListener('click', async () => { await clearDiagnostics(); renderDiagnostics(); });
+renderDiagnostics();
 
 // ---------- misc ----------
 

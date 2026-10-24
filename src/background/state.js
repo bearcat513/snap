@@ -47,10 +47,15 @@ export async function refreshBadge() {
   const rec = await getRecording();
   const warn = await getFlag('libraryWarn');
   const quota = await getFlag('quotaBlocked');
+  const session = await getFlag('session');
   let text = '';
   let color = '#d93025';
   let title = 'Snap Companion';
-  if (rec) {
+  if (session && !rec) {
+    text = `S${session.captureIds.length}`;
+    color = '#2563eb';
+    title = `Snap Companion — capture session: ${session.captureIds.length} capture${session.captureIds.length === 1 ? '' : 's'}. Open the menu to finish.`;
+  } else if (rec) {
     text = rec.paused ? 'II' : 'REC';
     color = rec.paused ? '#b45309' : '#d93025';
     title = rec.paused ? 'Snap Companion — recording paused' : 'Snap Companion — recording';

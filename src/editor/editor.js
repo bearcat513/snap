@@ -1,6 +1,6 @@
 // Editor page (§7): annotation, context, destinations, save. Also hosts the library view.
 
-import { getSettings } from '../shared/settings.js';
+import { getSettings, templateForTable } from '../shared/settings.js';
 import { getCapture, updateCapture, getBlob, putBlob, del, listCaptures } from '../shared/db.js';
 import { getJob } from '../shared/jobs.js';
 import { thumbnailFromSource } from '../shared/image.js';
@@ -11,9 +11,14 @@ import { ContextForm } from './context-form.js';
 import { VideoEditor } from './video-editor.js';
 import { renderLibrary } from './library.js';
 import { toast, confirmDialog, el } from './ui.js';
-import { getAdapter, SAVE_ORDER } from '../storage/adapter.js';
-import { ensureS3Permission } from '../storage/s3.js';
+import { getAdapter, SAVE_ORDER, requestPlanOrigins } from '../storage/adapter.js';
+import { runSavePlan } from './save-runner.js';
+import { toSaveRecord } from '../shared/saves.js';
+import { describeLimits } from '../shared/sn.js';
 import '../ui/theme.js';
+import { logError, installErrorLogging } from '../shared/diagnostics.js';
+
+installErrorLogging('editor');
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -27,12 +32,26 @@ let job = null;
 let busy = false;
 const dest = {}; // id → { on, formats: Set, available, reason, touched }
 
-const DEST_DISPLAY_ORDER = ['servicenow', 's3', 'download'];
-const FORMAT_LABELS = { png: 'PNG', pdf: 'PDF report', video: 'Video', sidecar: '.md + .json' };
+const DEST_DISPLAY_ORDER = ['servicenow', 'jira', 'github', 'webhook', 's3', 'download'];
+const TRACKERS = new Set(['webhook', 'jira', 'github']); // shown only once configured
+const FORMAT_LABELS = { issue: 'Issue', png: 'PNG', pdf: 'PDF report', video: 'Video', gif: 'GIF', sidecar: '.md + .json' };
 const FORMATS = {
-  screenshot: { download: ['png', 'pdf'], s3: ['png', 'pdf'], servicenow: ['pdf', 'png'] },
-  recording: { download: ['video', 'pdf', 'sidecar'], s3: ['video', 'pdf', 'sidecar'], servicenow: ['pdf', 'video'] },
+  screenshot: {
+    download: ['png', 'pdf', 'sidecar'], s3: ['png', 'pdf', 'sidecar'], servicenow: ['pdf', 'png'],
+    webhook: ['png', 'pdf', 'sidecar'], jira: ['issue', 'png', 'pdf'], github: ['issue', 'png', 'pdf'],
+  },
+  recording: {
+    download: ['video', 'gif', 'pdf', 'sidecar'], s3: ['video', 'gif', 'pdf', 'sidecar'], servicenow: ['pdf', 'video', 'gif'],
+    webhook: ['video', 'pdf', 'sidecar'], jira: ['issue', 'pdf', 'gif', 'video'], github: ['issue', 'gif', 'pdf'],
+  },
+  session: {
+    download: ['pdf', 'png', 'video', 'sidecar'], s3: ['pdf', 'png', 'video', 'sidecar'], servicenow: ['pdf', 'png', 'video'],
+    webhook: ['pdf', 'sidecar'], jira: ['issue', 'pdf'], github: ['issue', 'pdf'],
+  },
 };
+// GitHub can only take files when an attachments branch is set (Settings → Issue trackers).
+if (!getAdapter('github').canAttach(settings)) for (const k of Object.keys(FORMATS)) FORMATS[k].github = ['issue'];
+let sessionMembers = []; // session view: member captures in report order
 
 // ---------------------------------------------------------------- views
 
@@ -46,7 +65,8 @@ function showLibrary() {
 
 $('btn-library').addEventListener('click', async () => {
   await persist();
-  showLibrary();
+  if (params.get('session')) location.href = `?capture=${encodeURIComponent(params.get('session'))}`;
+  else showLibrary();
 });
 
 // ---------------------------------------------------------------- load
@@ -66,19 +86,35 @@ async function openCapture(id) {
   contextForm = new ContextForm({ settings, knownTags });
   contextForm.set(capture.context || {});
   contextForm.addEventListener('change', schedulePersist);
+  await autoApplyTemplate();
   renderEnvironment();
   if (capture.warnings?.length) {
     $('warnings').hidden = false;
     $('warnings').textContent = capture.warnings.join(' ');
   }
-  document.querySelectorAll('[data-kind]').forEach((b) => { b.hidden = b.dataset.kind !== capture.kind; });
+  document.querySelectorAll('[data-kind]').forEach((b) => { b.hidden = !b.dataset.kind.split(' ').includes(capture.kind); });
+  if (params.get('session')) {
+    $('btn-library').textContent = '◀ Session';
+    $('btn-library').title = 'Back to the session report';
+  }
 
   if (capture.kind === 'screenshot') await setupImage();
+  else if (capture.kind === 'session') await setupSession();
   else await setupVideo();
   $('loading').hidden = true;
 
   await setupDestinations();
   renderSaves();
+}
+
+/** Templates can name ServiceNow tables; apply the match once, to a new /snap capture. */
+async function autoApplyTemplate() {
+  if (!capture.servicenow || capture.templateApplied) return;
+  const t = templateForTable(settings.templates, capture.servicenow.table);
+  if (!t) return;
+  contextForm.apply(t);
+  capture = (await updateCapture(capture.id, (c) => { c.templateApplied = t.id; })) || capture;
+  toast(`Applied the “${t.name}” template for ${capture.servicenow.table} records.`);
 }
 
 function renderEnvironment() {
@@ -88,6 +124,8 @@ function renderEnvironment() {
     ['Viewport', e.viewport], ['Pixel ratio', e.dpr && e.dpr !== 1 ? `${Math.round(e.dpr * 100) / 100}×` : ''],
     ['Captured', e.capturedAt && new Date(e.capturedAt).toLocaleString()], ['Captured by', e.capturedBy],
     ['Source', capture.source?.url],
+    ['Console', capture.devtools && `${capture.devtools.console.length} error${capture.devtools.console.length === 1 ? '' : 's'} / warning${capture.devtools.console.length === 1 ? '' : 's'}`],
+    ['Network', capture.devtools && `${capture.devtools.network.length} failed request${capture.devtools.network.length === 1 ? '' : 's'}`],
   ].filter(([, v]) => v);
   $('env').replaceChildren(...rows.flatMap(([k, v]) => [el('dt', { text: k }), el('dd', { text: v })]));
 }
@@ -114,7 +152,56 @@ async function setupImage() {
   setWidth(style.width);
   setBlurMode(style.blurMode);
   syncToolState();
+  annotator.addEventListener('hint-click', (e) => acceptSuggestions([e.detail.index]));
+  renderSuggestions();
 }
+
+// ---------------------------------------------------------------- suggested redactions
+
+const KIND_LABELS = {
+  email: ['email address', 'email addresses'], phone: ['phone number', 'phone numbers'], ipv4: ['IP address', 'IP addresses'],
+  card: ['card number', 'card numbers'], token: ['token or key', 'tokens or keys'], password: ['password field', 'password fields'],
+  custom: ['match of your patterns', 'matches of your patterns'],
+};
+
+const pendingSuggestions = () => (capture?.suggestionsReviewed ? [] : capture?.suggestedRedactions || []);
+
+function describeSuggestions(list) {
+  const counts = new Map();
+  for (const s of list) counts.set(s.kind, (counts.get(s.kind) || 0) + 1);
+  return [...counts].map(([k, n]) => `${n} ${(KIND_LABELS[k] || [k, k])[n === 1 ? 0 : 1]}`).join(', ');
+}
+
+let reviewing = false;
+
+function renderSuggestions() {
+  const list = pendingSuggestions();
+  $('suggest-banner').hidden = !list.length || !annotator;
+  if (!list.length) { reviewing = false; annotator?.setHints([]); return; }
+  $('suggest-text').textContent = `Found ${list.length} thing${list.length === 1 ? '' : 's'} that look${list.length === 1 ? 's' : ''} sensitive: ${describeSuggestions(list)}. ${reviewing ? 'Click an outlined area to redact it.' : 'Nothing is hidden until you choose.'}`;
+  $('btn-suggest-review').setAttribute('aria-pressed', String(reviewing));
+  annotator.setHints(reviewing ? list : []);
+}
+
+async function updateSuggestions(remaining, reviewed = false) {
+  capture = (await updateCapture(capture.id, (c) => {
+    c.suggestedRedactions = remaining;
+    if (reviewed || !remaining.length) c.suggestionsReviewed = true;
+  })) || capture;
+  renderSuggestions();
+}
+
+/** Turn the suggestions at `indexes` into blur/pixelate redactions (one undo step). */
+async function acceptSuggestions(indexes) {
+  const list = pendingSuggestions();
+  const picked = new Set(indexes);
+  annotator.addShapes(list.filter((_, i) => picked.has(i)).map(({ x, y, w, h }) => ({ type: 'blur', props: { x, y, w, h, mode: annotator.blurMode } })));
+  await updateSuggestions(list.filter((_, i) => !picked.has(i)));
+}
+
+$('btn-suggest-all').addEventListener('click', () => acceptSuggestions(pendingSuggestions().map((_, i) => i)));
+$('btn-suggest-review').addEventListener('click', () => { reviewing = !reviewing; renderSuggestions(); });
+$('btn-suggest-dismiss').addEventListener('click', () => updateSuggestions([], true));
 
 // Annotation style: Settings → Editor defaults, or the last style used when "remember" is on.
 const STYLE_KEY = 'snap.editorStyle';
@@ -344,6 +431,72 @@ document.addEventListener('keydown', (e) => {
   if (tool) setTool(tool);
 });
 
+// ---------------------------------------------------------------- session report
+
+async function setupSession() {
+  $('tools').hidden = true;
+  document.querySelector('.layout').classList.add('mode-video', 'mode-session');
+  $('session-wrap').hidden = false;
+  sessionMembers = [];
+  for (const id of capture.members || []) {
+    const m = await getCapture(id);
+    if (m) sessionMembers.push(m);
+  }
+  const kinds = new Set(sessionMembers.map((m) => m.kind));
+  // Offer only the per-file formats this session has media for.
+  for (const id of Object.keys(FORMATS.session)) {
+    FORMATS.session[id] = FORMATS.session[id].filter((f) => (f !== 'png' || kinds.has('screenshot')) && (f !== 'video' || kinds.has('recording')));
+  }
+  document.querySelector('[data-export="png"]').hidden = !kinds.has('screenshot');
+  document.querySelector('[data-export="video"]').hidden = !kinds.has('recording');
+  await renderSessionList();
+}
+
+const sessionUrls = [];
+async function renderSessionList() {
+  sessionUrls.splice(0).forEach((u) => URL.revokeObjectURL(u));
+  const move = async (i, d) => {
+    const j = i + d;
+    if (j < 0 || j >= sessionMembers.length) return;
+    [sessionMembers[i], sessionMembers[j]] = [sessionMembers[j], sessionMembers[i]];
+    await renderSessionList();
+    schedulePersist();
+  };
+  const remove = async (i) => {
+    const [m] = sessionMembers.splice(i, 1);
+    await updateCapture(m.id, (c) => { delete c.sessionId; });
+    await renderSessionList();
+    schedulePersist();
+  };
+  const items = [];
+  for (const [i, m] of sessionMembers.entries()) {
+    const thumb = await getBlob(m.thumbnailBlobId);
+    let media = el('span', { class: 'ph', text: m.kind === 'recording' ? '▶' : '▣' });
+    if (thumb) {
+      const u = URL.createObjectURL(thumb);
+      sessionUrls.push(u);
+      media = el('img', { src: u, alt: '' });
+    }
+    const pending = !m.suggestionsReviewed && m.suggestedRedactions?.length;
+    items.push(el('li', {},
+      media,
+      el('div', { class: 'meta' },
+        el('strong', { text: m.title }),
+        el('span', { class: 'small muted', text: [m.kind === 'recording' ? 'Recording' : 'Screenshot', new Date(m.createdAt).toLocaleTimeString(), m.context?.description].filter(Boolean).join(' · ') }),
+        pending ? el('div', { class: 'small warn-text', text: `${pending} suggested redaction${pending === 1 ? '' : 's'} to review` }) : null),
+      el('span', { class: 'row-actions' },
+        el('button', { class: 'small', onclick: async () => { await persist(); location.href = `?capture=${encodeURIComponent(m.id)}&session=${encodeURIComponent(capture.id)}`; } }, 'Open'),
+        el('button', { class: 'ghost icon', title: 'Move up', 'aria-label': `Move ${m.title} up`, disabled: i === 0, onclick: () => move(i, -1) }, '↑'),
+        el('button', { class: 'ghost icon', title: 'Move down', 'aria-label': `Move ${m.title} down`, disabled: i === sessionMembers.length - 1, onclick: () => move(i, 1) }, '↓'),
+        el('button', { class: 'ghost icon', title: 'Remove from this report (stays in the library)', 'aria-label': `Remove ${m.title} from the report`, onclick: () => remove(i) }, '✕'))));
+  }
+  $('session-list').replaceChildren(...items);
+  if (!items.length) $('session-list').append(el('li', { class: 'muted small', text: 'No captures left in this session.' }));
+}
+
+/** Members whose suggested redactions haven't been reviewed. */
+const sessionPendingSuggestions = () => sessionMembers.filter((m) => !m.suggestionsReviewed && m.suggestedRedactions?.length);
+
 // ---------------------------------------------------------------- video
 
 async function setupVideo() {
@@ -360,6 +513,21 @@ async function setupVideo() {
   videoEditor = new VideoEditor({ capture, blob });
   await videoEditor.init();
   videoEditor.addEventListener('change', () => { schedulePersist(); scheduleVideoThumbnail(); });
+  renderTranscript();
+  $('btn-guide').addEventListener('click', async () => {
+    const steps = await videoEditor.generateGuide();
+    if (steps === null) return;
+    if (!steps.length) { toast('No clicks were recorded inside the exported range.'); return; }
+    contextForm.setSteps(steps);
+    toast(`Guide: ${steps.length} step${steps.length === 1 ? '' : 's'} from the recorded clicks. Edit the wording under Steps.`, 5000);
+  });
+}
+
+function renderTranscript() {
+  const cues = capture.captions || [];
+  $('transcript-panel').hidden = !cues.length;
+  $('transcript').replaceChildren(...cues.map((c) => el('li', {}, el('button', { onclick: () => videoEditor.seekTo(c.startMs), title: 'Go to this point' },
+    el('span', { class: 't', text: formatDuration(c.startMs) }), el('span', { text: c.text })))));
 }
 
 let videoThumbTimer = null;
@@ -394,11 +562,13 @@ async function persist() {
   const context = { ...capture.context, ...contextForm.get() };
   const annotations = annotator ? annotator.toDoc() : undefined;
   const video = videoEditor ? videoEditor.state() : undefined;
+  const members = capture.kind === 'session' ? sessionMembers.map((m) => m.id) : undefined;
   // Re-read first so results the service worker wrote (ServiceNow saves) aren't clobbered.
   const updated = await updateCapture(capture.id, (c) => {
     c.title = title;
     c.context = context;
     if (annotations) c.annotations = annotations;
+    if (members) c.members = members;
     if (video) {
       if (video.trim) c.trim = video.trim; else delete c.trim;
       c.videoRedactions = video.videoRedactions;
@@ -435,6 +605,9 @@ function snDefaultFormats() {
 
 function defaultFormats(id) {
   if (id === 'servicenow') return snDefaultFormats();
+  if (id === 'jira' || id === 'github') return FORMATS[capture.kind][id].slice(0, 2); // the issue + the main file
+  if (id === 'webhook') return [FORMATS[capture.kind].webhook[0]];
+  if (capture.kind === 'session') return ['pdf'];
   if (capture.kind === 'screenshot') return ['png'];
   return id === 's3' ? ['video', 'sidecar'] : ['video'];
 }
@@ -442,9 +615,9 @@ function defaultFormats(id) {
 async function setupDestinations() {
   const defaults = new Set(capture.kind === 'screenshot' ? settings.defaultScreenshotDestinations : settings.defaultRecordingDestinations);
   if (capture.servicenow) defaults.add('servicenow');
-  for (const id of ['s3', 'download', 'servicenow']) { // S3 first: SN defaults depend on it
+  for (const id of ['s3', 'download', 'servicenow', 'webhook', 'jira', 'github']) { // S3 first: SN defaults depend on it
     const av = await getAdapter(id).isAvailable(adapterCtx()).catch((err) => ({ available: false, reason: err.message }));
-    dest[id] = { on: av.available && defaults.has(id), available: av.available, reason: av.reason, touched: false };
+    dest[id] = { on: av.available && defaults.has(id), available: av.available, configured: av.configured !== false, reason: av.reason, touched: false };
     dest[id].formats = new Set(defaultFormats(id));
   }
   renderDestinations();
@@ -465,6 +638,7 @@ function renderDestinations() {
   root.replaceChildren();
   for (const id of DEST_DISPLAY_ORDER) {
     const d = dest[id];
+    if (!d || (TRACKERS.has(id) && !d.configured)) continue;
     const adapter = getAdapter(id);
     const label = id === 'servicenow' && capture.servicenow ? `Record ${capture.servicenow.label}` : adapter.label;
     const toggle = el('input', { type: 'checkbox', checked: d.on, disabled: !d.available || busy, id: `dest-${id}` });
@@ -478,6 +652,8 @@ function renderDestinations() {
     const box = el('div', { class: `dest${d.on ? ' on' : ''}${d.available ? '' : ' unavailable'}` },
       el('label', { class: 'dest-head', for: `dest-${id}` }, toggle, label));
     if (!d.available && d.reason) box.append(el('div', { class: 'dest-reason', text: d.reason }));
+    const limits = id === 'servicenow' && d.available ? describeLimits(capture.servicenow?.limits) : '';
+    if (limits) box.append(el('div', { class: 'dest-reason', text: limits }));
     if (id === 'servicenow' && !d.available && capture.servicenow && dest.download.available) {
       box.append(el('button', {
         class: 'link-btn',
@@ -491,7 +667,8 @@ function renderDestinations() {
     if (d.on) {
       const formats = el('div', { class: 'dest-formats' });
       for (const f of FORMATS[capture.kind][id]) {
-        const cb = el('input', { type: 'checkbox', checked: d.formats.has(f), disabled: busy });
+        if (f === 'issue') d.formats.add(f); // the issue is what this destination makes
+        const cb = el('input', { type: 'checkbox', checked: d.formats.has(f), disabled: busy || f === 'issue' });
         cb.addEventListener('change', () => {
           if (cb.checked) d.formats.add(f); else d.formats.delete(f);
           d.touched = true;
@@ -516,11 +693,12 @@ function setBusy(on, status = '') {
 }
 
 function hasRedaction() {
+  if (capture.kind === 'session') return sessionMembers.some((m) => m.annotations?.shapes?.some((sh) => sh.type === 'blur') || m.videoRedactions?.length);
   return capture.kind === 'screenshot' ? !!annotator?.hasRedaction() : !!videoEditor?.redactions.length;
 }
 
 function needsRedactionReminder(plan) {
-  return settings.redactionReminder && !hasRedaction() && plan.some((p) => p.id === 's3' || p.id === 'servicenow');
+  return settings.redactionReminder && !hasRedaction() && plan.some((p) => p.id !== 'download');
 }
 
 /** plan: [{ id, formats: [] }] in SAVE_ORDER. Defaults to the destinations panel. */
@@ -534,8 +712,9 @@ async function save(plan) {
   if (blocked) { toast(dest[blocked.id]?.reason || 'That destination is unavailable.'); return; }
 
   // Permission prompt must come first, while we still hold the click's user gesture.
-  if (plan.some((p) => p.id === 's3') && !(await ensureS3Permission(settings))) {
-    toast('Access to the S3 presign endpoint was not granted.');
+  const access = await requestPlanOrigins(plan, settings);
+  if (!access.ok) {
+    toast(`Access to ${access.origins.map((o) => o.replace('/*', '')).join(', ')} was not granted.`);
     return;
   }
   if (plan.some((p) => p.id === 'servicenow') && !$('ctx-description').value.trim()) {
@@ -547,13 +726,31 @@ async function save(plan) {
   const missing = plan.some((p) => p.id !== 'download') ? contextForm.missingRequired() : [];
   if (missing.length) {
     contextForm.markMissing(missing);
-    toast(`Fill in ${missing.map((f) => f.label).join(', ')} before saving to ${plan.some((p) => p.id === 'servicenow') ? 'ServiceNow' : 'S3'}.`);
+    toast(`Fill in ${missing.map((f) => f.label).join(', ')} before saving to ${plan.filter((p) => p.id !== 'download').map((p) => getAdapter(p.id).label).join(' or ')}.`);
     return;
   }
-  if (needsRedactionReminder(plan)) {
+  const leaves = plan.some((p) => p.id !== 'download');
+  if (leaves && sessionPendingSuggestions().length) {
+    const n = sessionPendingSuggestions().length;
+    const ok = await confirmDialog({
+      title: 'Suggested redactions not reviewed',
+      message: `${n} capture${n === 1 ? ' in this session has' : 's in this session have'} suggested redactions you haven't reviewed. Open ${n === 1 ? 'it' : 'them'} to redact or dismiss the suggestions.`,
+      ok: 'Save anyway',
+      cancel: 'Go back',
+    });
+    if (!ok) return;
+  } else if (leaves && pendingSuggestions().length) {
+    const ok = await confirmDialog({
+      title: 'Suggested redactions not applied',
+      message: `${describeSuggestions(pendingSuggestions())} found in this screenshot ${pendingSuggestions().length === 1 ? 'is' : 'are'} not redacted.`,
+      ok: 'Save anyway',
+      cancel: 'Go back',
+    });
+    if (!ok) return;
+  } else if (needsRedactionReminder(plan)) {
     const ok = await confirmDialog({
       title: 'Check for personal data',
-      message: `This ${capture.kind === 'screenshot' ? 'screenshot' : 'recording'} has no redaction (blur/pixelate) regions. Make sure it contains no personal or sensitive data before it leaves this device.`,
+      message: `This ${capture.kind === 'session' ? 'session' : capture.kind === 'screenshot' ? 'screenshot' : 'recording'} has no redaction (blur/pixelate) regions. Make sure it contains no personal or sensitive data before it leaves this device.`,
       ok: 'Save anyway',
       cancel: 'Go back',
     });
@@ -563,47 +760,21 @@ async function save(plan) {
   await persist();
   setBusy(true, 'Preparing files…');
   const factory = new ExportFactory({ capture, annotator, settings, onProgress: (msg) => { $('save-status').textContent = msg; } });
-  const links = [];
-  const results = [];
-  const now = () => new Date().toISOString();
+  let results;
   try {
-    for (const step of plan) {
-      const adapter = getAdapter(step.id);
-      const ctx = adapterCtx();
-      if (adapter.saveAll) {
-        const files = [];
-        for (const f of step.formats) files.push(...(await factory.get(f, links)));
-        setBusy(true, `Sending to ${adapter.label}…`);
-        results.push(...(await adapter.saveAll(files, ctx)));
-        continue;
-      }
-      // PDF last, so it can cite the links of files uploaded just before it.
-      const ordered = [...step.formats].sort((a, b) => (a === 'pdf') - (b === 'pdf'));
-      for (const f of ordered) {
-        for (const file of await factory.get(f, links)) {
-          setBusy(true, `${adapter.label}: ${file.name}`);
-          const r = await adapter.save(file, ctx, (p) => setBusy(true, `${adapter.label}: ${file.name} ${Math.round(p * 100)}%`));
-          r.at = now();
-          results.push(r);
-          if (step.id === 's3' && r.ok && /^https?:\/\//.test(r.location || '')) links.push({ label: `S3: ${file.name}`, url: r.location });
-        }
-      }
-    }
-  } catch (err) {
-    results.push({ adapter: 'editor', ok: false, name: '', error: err.message, at: now() });
+    results = await runSavePlan({ plan, factory, ctx: adapterCtx, onStatus: (msg) => setBusy(true, msg) });
   } finally {
     setBusy(false);
   }
 
-  const mine = results.filter((r) => !r.persisted).map(({ adapter, ok, name, location, error, at, downloadId }) => ({
-    adapter, ok, name, location, error, at: at || now(), downloadId,
-  }));
+  const mine = results.filter((r) => !r.persisted).map(toSaveRecord);
   capture = (await updateCapture(capture.id, (c) => { c.saves = [...(c.saves || []), ...mine]; })) || capture;
   await refreshThumbnail();
   renderSaves();
   if (dest.servicenow && capture.servicenow) await refreshSnAvailability();
 
   const failed = results.filter((r) => !r.ok);
+  for (const r of failed) logError(`save:${r.adapter}`, r.error || 'Save failed', { file: r.name, kind: capture.kind });
   if (!failed.length) {
     $('save-status').textContent = `Saved ${results.length} file${results.length === 1 ? '' : 's'}`;
     toast(factory.warnings.length ? `Saved. ${factory.warnings.join(' ')}` : 'Saved.', factory.warnings.length ? 6000 : 3500);
@@ -624,7 +795,7 @@ async function refreshThumbnail() {
   } catch { /* cosmetic */ }
 }
 
-const ADAPTER_NAMES = { download: 'Downloaded', s3: 'S3', servicenow: 'ServiceNow', editor: 'Editor' };
+const ADAPTER_NAMES = { download: 'Downloaded', s3: 'S3', servicenow: 'ServiceNow', webhook: 'Webhook', jira: 'Jira', github: 'GitHub', editor: 'Editor' };
 
 function renderSaves() {
   const saves = capture.saves || [];

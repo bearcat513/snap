@@ -20,9 +20,10 @@
       <div class="menu">
         <button id="btn-export" aria-haspopup="true" aria-expanded="false">Export ▾</button>
         <div id="export-menu" class="menu-list" role="menu" hidden>
-          <button role="menuitem" data-export="png" data-kind="screenshot">Download PNG</button>
+          <button role="menuitem" data-export="png" data-kind="screenshot session">Download PNG</button>
           <button role="menuitem" data-export="clipboard" data-kind="screenshot">Copy image</button>
-          <button role="menuitem" data-export="video" data-kind="recording">Download video</button>
+          <button role="menuitem" data-export="video" data-kind="recording session">Download video</button>
+          <button role="menuitem" data-export="gif" data-kind="recording">Download GIF</button>
           <button role="menuitem" data-export="pdf">Download PDF report</button>
           <button role="menuitem" data-export="sidecar">Download .md + .json</button>
         </div>
@@ -31,6 +32,12 @@
     </header>
 
     <div id="warnings" class="warn-banner" hidden></div>
+    <div id="suggest-banner" class="suggest-banner" role="status" hidden>
+      <span id="suggest-text"></span>
+      <button id="btn-suggest-all" class="primary small">Redact all</button>
+      <button id="btn-suggest-review" class="small" aria-pressed="false">Review one by one</button>
+      <button id="btn-suggest-dismiss" class="ghost small">Dismiss</button>
+    </div>
 
     <main class="layout">
       <aside id="tools" class="tools" aria-label="Annotation tools">
@@ -97,6 +104,7 @@
             <span class="sep"></span>
             <button id="btn-add-key" title="Add the current frame to the PDF report">＋ Keyframe</button>
             <button id="btn-auto-keys" title="Pick 4 evenly spaced keyframes">Auto keyframes</button>
+            <button id="btn-guide" title="One keyframe and step per click recorded in the tab" hidden>✦ Generate guide</button>
             <span class="sep"></span>
             <button id="btn-redact-video" aria-pressed="false" title="Draw regions to pixelate/blur from the current time">▒ Redact region</button>
             <select id="video-blur-mode" aria-label="New region style"><option value="pixelate">Pixelate</option><option value="blur">Blur</option></select>
@@ -108,12 +116,21 @@
               <ul id="keyframes" class="keyframes"></ul>
               <p id="keyframes-empty" class="muted small">None picked: the PDF uses the first frame of the exported range.</p>
             </section>
+            <section class="video-panel" id="transcript-panel" hidden>
+              <h2>Transcript <span class="muted small">(on-device captions)</span></h2>
+              <ol id="transcript" class="transcript"></ol>
+            </section>
             <section class="video-panel">
               <h2>Redactions</h2>
               <ul id="video-redactions" class="vredactions"></ul>
               <p id="redactions-empty" class="muted small">Turn on “Redact region” and drag over the video. A region runs from the current time to the end; adjust with Start/End = now.</p>
             </section>
           </div>
+        </div>
+        <div class="session-wrap" id="session-wrap" hidden>
+          <h2>Captures in this report</h2>
+          <ol id="session-list" class="session-list"></ol>
+          <p class="small muted">The PDF report has a section per capture, in this order, after the shared context. Open a capture to annotate, crop or trim it; its edits are used here.</p>
         </div>
         <div id="loading" class="muted">Loading…</div>
       </section>
