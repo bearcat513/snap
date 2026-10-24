@@ -9,6 +9,7 @@ import { el, confirmDialog } from './ui.js';
 
 const MIN_TRIM_MS = 300;
 const AUTO_KEYFRAMES = 4;
+const FRAME_RATE = 30;
 
 const fmt = (ms) => {
   const s = Math.max(0, ms) / 1000;
@@ -113,6 +114,26 @@ export class VideoEditor extends EventTarget {
       if (!this.video.paused) this.video.requestVideoFrameCallback(step);
     };
     this.video.requestVideoFrameCallback(step);
+  }
+
+  // ---------------- transport (keyboard)
+
+  togglePlay() {
+    if (this.video.paused) this.video.play().catch(() => {}); else this.video.pause();
+  }
+
+  seekTo(ms) {
+    this.video.currentTime = Math.max(0, Math.min(this.durationMs, ms)) / 1000;
+  }
+
+  seekBy(ms) {
+    this.seekTo(this.nowMs + ms);
+  }
+
+  /** Step whole frames; MediaRecorder output has no fixed frame index, so assume the recording's rate. */
+  stepFrames(n) {
+    this.video.pause();
+    this.seekBy((n * 1000) / (this.capture.source?.fps || FRAME_RATE));
   }
 
   // ---------------- overlay (live redaction preview + region drawing)

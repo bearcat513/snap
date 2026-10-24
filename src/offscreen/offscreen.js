@@ -6,12 +6,13 @@ let current = null;
 
 async function startTab({ jobId, streamId, opts, source, servicenow }) {
   if (current) throw new Error('Already recording');
+  const { maxWidth = 1920, maxHeight = 1080, fps = 30 } = opts.quality || {};
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: streamId } },
     video: {
       mandatory: {
         chromeMediaSource: 'tab', chromeMediaSourceId: streamId,
-        maxWidth: 1920, maxHeight: 1080, maxFrameRate: 30,
+        maxWidth, maxHeight, maxFrameRate: fps,
       },
     },
   });

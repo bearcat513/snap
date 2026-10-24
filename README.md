@@ -23,16 +23,24 @@ After code changes, click the reload icon on the extension card. Service-worker 
 | Full page | Popup or context menu (scroll & stitch; DevTools method optional in Settings) |
 | Record this tab | <kbd>Alt+Shift+R</kbd> to start/stop, or the popup. No picker. Tab audio keeps playing. |
 | Record window / screen | Popup → *Window / screen*. This opens a small recorder window that shows Chrome's picker. |
-| Pause / resume / stop | Popup while recording (badge shows `REC` / `II`). Chrome's *Stop sharing* bar also ends it. |
+| Pause / resume / stop | <kbd>Alt+Shift+P</kbd> pauses/resumes any recording; the popup has all three (badge shows `REC` / `II`). Chrome's *Stop sharing* bar also ends it. |
 | Library | Popup → *Library*: captures kept in IndexedDB on this device. Search, filter by kind/tag/"not saved", and re-export from the ⋯ menu without opening the editor. |
 
 The **editor** opens in a tab after each capture:
 
-- **Tools:** select/move `V`, crop `C`, arrow `A`, box `R`, ellipse `E`, text `T`, highlighter `H`, step markers `N`, blur/pixelate `B`. Undo with `Ctrl+Z`, redo with `Ctrl+Shift+Z`, delete with `Del`, save with `Ctrl+S`. Hold `Shift` to constrain shapes.
+- **Tools:** select/move/resize `V`, crop `C`, arrow `A`, box `R`, ellipse `E`, pen `P`, text `T`, highlighter `H`, step markers `N`, blur/pixelate `B`. Undo with `Ctrl+Z`, redo with `Ctrl+Shift+Z`, delete with `Del`, save with `Ctrl+S`. Hold `Shift` to constrain shapes. Press `?` for the full list of shortcuts.
+- **Resize:** with Select, drag a shape's handles. Boxes, ellipses, highlights, redactions and pen strokes have eight; arrows have one at each end; text has one at its corner, which changes the font size.
+- **Zoom:** `Ctrl` + scroll (or pinch) zooms around the pointer, `Ctrl+=` / `Ctrl+−` step, and `Ctrl+0` or the *Fit* button toggles fit / 100%.
+- **Copy:** the *Copy* button or `Ctrl+C` puts the annotated, cropped image on the clipboard.
 - **Redaction** is applied to the pixels of the exported PNG/PDF, not drawn on top, so the hidden content can't be recovered.
 - **Context:** record URL, a one-line description (required for ServiceNow), steps to reproduce, notes, tags, and any extra fields defined in Settings (required ones must be filled before saving to S3 or ServiceNow). **Template ▾** pre-fills these from a template. Environment metadata (instance, table, record, browser, viewport, time, user) is filled in automatically.
-- **Video:** trim with the timeline handles or *Set start* / *Set end* (`[` / `]`). Add keyframes for the PDF report (*＋ Keyframe*, `K`, or *Auto keyframes*). *Redact region* lets you drag boxes over the video that pixelate or blur from the current time; adjust each region's time range with *Start/End = now*. The player previews the redactions live. On export the video is re-encoded with the trim and redactions. That runs in real time and needs the tab visible; the result is cached until you change the edits.
+- **Video:** `Space` plays/pauses, `,` / `.` step one frame, `←` / `→` seek 1 s (`Shift`: 5 s), and `Home` / `End` jump to the ends of the trim. Trim with the timeline handles or *Set start* / *Set end* (`[` / `]`). Add keyframes for the PDF report (*＋ Keyframe*, `K`, or *Auto keyframes*). *Redact region* lets you drag boxes over the video that pixelate or blur from the current time; adjust each region's time range with *Start/End = now*. The player previews the redactions live. On export the video is re-encoded with the trim and redactions. That runs in real time and needs the tab visible; the result is cached until you change the edits.
 - **Destinations:** tick any of *ServiceNow record*, *Amazon S3* and *Download*, and pick the formats for each (PNG, PDF report, video, `.md` + `.json` sidecar). They save in order: S3 first, then ServiceNow, then Download. That way the S3 link can go into the PDF attached to the record (hybrid mode).
+
+## Settings worth knowing
+
+- **Editor & appearance:** light / dark / system theme for every extension page; the default tool, color, stroke width and redaction style; whether the editor starts with the style you used last; and the color palette (up to 16 swatches).
+- **Recording:** maximum resolution (720p, 1080p, 1440p or source), frame rate, and bitrate, with a file-size estimate. Recordings are only ever scaled down. *Show keyboard shortcuts and keys pressed* adds an on-page key overlay to tab recordings. It never shows password fields, and plain typing in a text box appears as "typing…".
 
 ## ServiceNow `/snap` command
 
@@ -96,7 +104,7 @@ Admins can push `s3`, `snHosts`, `allowedDestinations`, `forceRedactionReminder`
 
 ```sh
 npm test          # unit: naming, bridge validation, PDF writer, WebM duration patch, S3 part planner,
-                  # templates, custom fields, library search
+                  # templates, custom fields, library search, palette + recording quality settings
 npm run test:e2e  # headless Chrome + mock ServiceNow over TLS: /snap → editor → template/steps/tags/
                   # required field → annotate/redact → attach PDF + download PNG; replay/forgery rejection;
                   # full page; region; window recording → trim + timed redaction render, keyframe PDF,

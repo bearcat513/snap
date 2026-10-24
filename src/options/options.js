@@ -1,8 +1,10 @@
 // Options page (§14). Inputs with data-key bind to chrome.storage.sync; managed keys are locked.
 
-import { getSettings, setSettings, normalizeHost, isBuiltinSnHost, customSnHosts } from '../shared/settings.js';
+import { getSettings, setSettings, normalizeHost, isBuiltinSnHost, customSnHosts, DEFAULTS } from '../shared/settings.js';
 import { buildFileName } from '../shared/naming.js';
 import { endpointOrigin } from '../storage/s3.js';
+import { formatBytes } from '../shared/util.js';
+import '../ui/theme.js';
 
 const $ = (id) => document.getElementById(id);
 let settings = await getSettings();
@@ -38,6 +40,7 @@ function render() {
   }
   $('managed-note').hidden = !settings.locked.length && !settings.managedSnHosts.length;
   $('oidc-row').hidden = settings['s3.auth'] !== 'oidc';
+  $('size-estimate').textContent = formatBytes((Number(settings['recording.bitrateMbps']) || 2.5) * 1e6 * 60 / 8);
   updatePreview();
 }
 
@@ -49,7 +52,7 @@ async function onChange(e) {
   if (input.dataset.value) {
     value = [...document.querySelectorAll(`[data-key="${key}"][data-value]`)].filter((i) => i.checked).map((i) => i.dataset.value);
   } else if (input.type === 'checkbox') value = input.checked;
-  else if (input.type === 'number') {
+  else if (input.type === 'number' || 'number' in input.dataset) {
     value = Number(input.value);
     if (!Number.isFinite(value) || value < Number(input.min || 0)) { input.value = settings[key]; return; }
   } else value = input.value.trim();
@@ -152,6 +155,21 @@ $('btn-add-template').addEventListener('click', () => {
   templates.push({ id: crypto.randomUUID().slice(0, 8), name: 'New template', description: '', notes: '', steps: [], tags: [] });
   renderTemplates();
 });
+
+// ---------- palette ----------
+
+let palette = [];
+function renderPalette() {
+  const save = () => saveList('editor.palette', palette);
+  $('palette').replaceChildren(...palette.map((color, i) => h('li', {},
+    h('input', { type: 'color', value: color, 'aria-label': `Color ${i + 1}`, oninput: (e) => { palette[i] = e.target.value; save(); } }),
+    h('button', { class: 'ghost danger', 'aria-label': `Remove color ${i + 1}`, disabled: palette.length <= 1, onclick: () => { palette.splice(i, 1); save(); renderPalette(); } }, '✕'))));
+  $('btn-add-color').disabled = palette.length >= 16;
+}
+$('btn-add-color').addEventListener('click', () => { palette.push('#7c3aed'); saveList('editor.palette', palette); renderPalette(); });
+$('btn-reset-palette').addEventListener('click', () => { palette = [...DEFAULTS['editor.palette']]; saveList('editor.palette', palette); renderPalette(); });
+palette = [...settings['editor.palette']];
+renderPalette();
 
 fields = structuredClone(settings.customFields);
 templates = structuredClone(settings.templates);

@@ -12,6 +12,10 @@ export const DEFAULTS = {
   'recording.mic': false,
   'recording.clickHighlights': true,
   'recording.countdown': true,
+  'recording.quality': '1080p', // '720p' | '1080p' | '1440p' | 'source'
+  'recording.fps': 30,
+  'recording.bitrateMbps': 2.5,
+  'recording.keystrokes': false,
   'pdf.pageSize': 'letter',
   'library.maxItems': 20,
   'library.maxMB': 1024,
@@ -24,6 +28,13 @@ export const DEFAULTS = {
   's3.oidcAuthUrl': '',
   's3.keyPrefix': '',
   'capture.delaySeconds': 0, // popup screenshots: 0 | 3 | 5 | 10
+  'ui.theme': 'system', // 'system' | 'light' | 'dark'
+  'editor.defaultTool': 'arrow',
+  'editor.defaultColor': '#e5484d',
+  'editor.defaultWidth': 4,
+  'editor.defaultBlurMode': 'pixelate',
+  'editor.rememberStyle': true, // start each capture with the last tool/color/width used
+  'editor.palette': ['#e5484d', '#f76b15', '#ffd60a', '#30a46c', '#2563eb', '#111111', '#ffffff'],
   // Extra context fields: [{ id, label, type: 'text' | 'textarea' | 'select', options?: string[], required?: boolean }]
   customFields: [],
   // Context templates applied from the editor: [{ id, name, description, notes, steps: [], tags: [] }]
@@ -106,8 +117,27 @@ export async function getSettings() {
   s.templates = (Array.isArray(s.templates) ? s.templates : []).filter((t) => t && t.name)
     .map((t, i) => ({ id: String(t.id || `t${i}`), name: String(t.name), description: t.description || '', notes: t.notes || '',
       steps: Array.isArray(t.steps) ? t.steps.map(String) : [], tags: Array.isArray(t.tags) ? t.tags.map(String) : [] }));
+  s['editor.palette'] = normalizePalette(s['editor.palette']);
   s.locked = [...locked];
   return s;
+}
+
+const HEX = /^#[0-9a-f]{6}$/;
+
+/** Lower-cased, de-duplicated #rrggbb colors (at most 16); the default palette if none are valid. */
+export function normalizePalette(colors) {
+  const out = [...new Set((Array.isArray(colors) ? colors : []).map((c) => String(c).trim().toLowerCase()).filter((c) => HEX.test(c)))];
+  return out.length ? out.slice(0, 16) : [...DEFAULTS['editor.palette']];
+}
+
+const QUALITY = { '720p': [1280, 720], '1080p': [1920, 1080], '1440p': [2560, 1440], source: [3840, 2160] };
+
+/** Capture constraints and encoder bitrate for recordings (Settings → Recording). */
+export function recordingQuality(settings) {
+  const [maxWidth, maxHeight] = QUALITY[settings['recording.quality']] || QUALITY['1080p'];
+  const fps = [15, 24, 30, 60].includes(Number(settings['recording.fps'])) ? Number(settings['recording.fps']) : 30;
+  const mbps = Math.min(50, Math.max(0.5, Number(settings['recording.bitrateMbps']) || 2.5));
+  return { maxWidth, maxHeight, fps, videoBitsPerSecond: Math.round(mbps * 1_000_000) };
 }
 
 export async function setSettings(patch) {

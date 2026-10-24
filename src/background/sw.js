@@ -8,7 +8,7 @@ import { isCapturableUrl } from '../shared/util.js';
 import { snapVisible, snapRegion, snapFullPage } from './capture.js';
 import {
   startTabRecording, openRecorderWindow, onRecorderStarted, pauseRecording, resumeRecording,
-  stopRecording, onRecordingEnded, markInterrupted,
+  stopRecording, onRecordingEnded, markInterrupted, togglePauseRecording,
 } from './recording-control.js';
 import * as bridge from './bridge.js';
 import { openEditor, openLibrary } from './editor-tabs.js';
@@ -105,6 +105,7 @@ chrome.commands.onCommand.addListener((command, tab) => guarded(async () => {
   if (command === 'snap-visible') return doCapture('visible', tab);
   if (command === 'snap-region') return doCapture('region', tab);
   if (command === 'record-toggle') return toggleTabRecording(tab);
+  if (command === 'record-pause') return togglePauseRecording();
 }));
 
 chrome.contextMenus.onClicked.addListener((info, tab) => guarded(async () => {

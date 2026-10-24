@@ -15,6 +15,8 @@
       <input id="title" class="title-input" type="text" placeholder="Untitled capture" aria-label="Capture title">
       <div class="spacer"></div>
       <span id="save-status" class="muted small" aria-live="polite"></span>
+      <button id="btn-help" class="ghost" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
+      <button id="btn-copy" data-kind="screenshot" title="Copy the annotated image (Ctrl+C)">⧉ Copy</button>
       <div class="menu">
         <button id="btn-export" aria-haspopup="true" aria-expanded="false">Export ▾</button>
         <div id="export-menu" class="menu-list" role="menu" hidden>
@@ -38,20 +40,13 @@
           <button data-tool="arrow" title="Arrow (A)">↗<span>Arrow</span></button>
           <button data-tool="rect" title="Rectangle (R)">▭<span>Box</span></button>
           <button data-tool="ellipse" title="Ellipse (E)">◯<span>Ellipse</span></button>
+          <button data-tool="pen" title="Pen (P)">✎<span>Pen</span></button>
           <button data-tool="text" title="Text (T)">T<span>Text</span></button>
           <button data-tool="highlight" title="Highlighter (H)">▮<span>Highlight</span></button>
           <button data-tool="step" title="Step marker (N)">①<span>Step</span></button>
           <button data-tool="blur" title="Blur / pixelate (B)">▒<span>Redact</span></button>
         </div>
-        <div class="tool-group swatches" aria-label="Color">
-          <button data-color="#e5484d" title="Red" style="--c:#e5484d"></button>
-          <button data-color="#f76b15" title="Orange" style="--c:#f76b15"></button>
-          <button data-color="#ffd60a" title="Yellow" style="--c:#ffd60a"></button>
-          <button data-color="#30a46c" title="Green" style="--c:#30a46c"></button>
-          <button data-color="#2563eb" title="Blue" style="--c:#2563eb"></button>
-          <button data-color="#111111" title="Black" style="--c:#111111"></button>
-          <button data-color="#ffffff" title="White" style="--c:#ffffff"></button>
-        </div>
+        <div id="swatches" class="tool-group swatches" aria-label="Color"></div>
         <div class="tool-group widths" aria-label="Stroke width">
           <button data-width="2" title="Thin"><i style="height:2px"></i></button>
           <button data-width="4" title="Medium"><i style="height:4px"></i></button>
@@ -66,7 +61,11 @@
           <button id="btn-redo" title="Redo (Ctrl+Shift+Z)">↷<span>Redo</span></button>
           <button id="btn-delete" title="Delete selected (Del)">🗑<span>Delete</span></button>
           <button id="btn-clear-crop" title="Remove crop">⛶<span>Uncrop</span></button>
-          <button id="btn-zoom" title="Toggle fit / actual size">⤢<span>Fit</span></button>
+        </div>
+        <div class="tool-group zoom" aria-label="Zoom">
+          <button id="btn-zoom-in" title="Zoom in (Ctrl + = or Ctrl + scroll)">＋<span>Zoom in</span></button>
+          <button id="btn-zoom" title="Toggle fit / 100% (Ctrl + 0)">⤢<span>Fit</span></button>
+          <button id="btn-zoom-out" title="Zoom out (Ctrl + −)">−<span>Zoom out</span></button>
         </div>
       </aside>
 
@@ -171,6 +170,57 @@
         <button value="cancel"></button>
         <button value="ok" class="primary"></button>
       </menu>
+    </form>
+  </dialog>
+
+  <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-title">
+    <form method="dialog">
+      <h3 id="help-title">Keyboard shortcuts</h3>
+      <div class="help-cols">
+        <section>
+          <h4>Image tools</h4>
+          <dl>
+            <dt><kbd>V</kbd></dt><dd>Select / move / resize</dd>
+            <dt><kbd>C</kbd></dt><dd>Crop</dd>
+            <dt><kbd>A</kbd></dt><dd>Arrow</dd>
+            <dt><kbd>R</kbd></dt><dd>Box</dd>
+            <dt><kbd>E</kbd></dt><dd>Ellipse</dd>
+            <dt><kbd>P</kbd></dt><dd>Pen</dd>
+            <dt><kbd>T</kbd></dt><dd>Text</dd>
+            <dt><kbd>H</kbd></dt><dd>Highlighter</dd>
+            <dt><kbd>N</kbd></dt><dd>Step marker</dd>
+            <dt><kbd>B</kbd></dt><dd>Blur / pixelate</dd>
+            <dt><kbd>Shift</kbd></dt><dd>Hold while drawing to constrain</dd>
+          </dl>
+        </section>
+        <section>
+          <h4>Editing</h4>
+          <dl>
+            <dt><kbd>Ctrl</kbd> <kbd>Z</kbd></dt><dd>Undo</dd>
+            <dt><kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Z</kbd></dt><dd>Redo</dd>
+            <dt><kbd>Del</kbd></dt><dd>Delete selected</dd>
+            <dt><kbd>Esc</kbd></dt><dd>Back to Select</dd>
+            <dt><kbd>Ctrl</kbd> <kbd>C</kbd></dt><dd>Copy image</dd>
+            <dt><kbd>Ctrl</kbd> <kbd>S</kbd></dt><dd>Save</dd>
+            <dt><kbd>Ctrl</kbd> <kbd>=</kbd> / <kbd>−</kbd></dt><dd>Zoom in / out</dd>
+            <dt><kbd>Ctrl</kbd> <kbd>0</kbd></dt><dd>Fit / 100%</dd>
+          </dl>
+        </section>
+        <section>
+          <h4>Video</h4>
+          <dl>
+            <dt><kbd>Space</kbd></dt><dd>Play / pause</dd>
+            <dt><kbd>,</kbd> / <kbd>.</kbd></dt><dd>Previous / next frame</dd>
+            <dt><kbd>←</kbd> / <kbd>→</kbd></dt><dd>Back / forward 1 s (Shift: 5 s)</dd>
+            <dt><kbd>Home</kbd> / <kbd>End</kbd></dt><dd>Go to start / end of the trim</dd>
+            <dt><kbd>[</kbd> / <kbd>]</kbd></dt><dd>Set start / end</dd>
+            <dt><kbd>K</kbd></dt><dd>Add keyframe</dd>
+            <dt><kbd>Del</kbd></dt><dd>Delete selected region</dd>
+          </dl>
+        </section>
+      </div>
+      <p class="small muted">On a Mac, use <kbd>⌘</kbd> for <kbd>Ctrl</kbd>. Press <kbd>?</kbd> to show this again.</p>
+      <menu><button value="close" class="primary">Close</button></menu>
     </form>
   </dialog>
 

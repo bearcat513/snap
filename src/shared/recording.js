@@ -81,14 +81,14 @@ async function grabFrame(stream) {
 
 /**
  * Start recording `stream`. Returns controls plus `done`, a promise for the finished capture.
- * opts: { mic, maxMinutes, playback }
+ * opts: { mic, maxMinutes, playback, videoBitsPerSecond }
  */
 export async function startRecording({ jobId, stream, opts = {}, source, servicenow }) {
   const mix = await mixAudio(stream, { mic: !!opts.mic, playback: !!opts.playback });
   const mimeType = pickMimeType();
   const recorder = new MediaRecorder(mix.stream, {
     ...(mimeType ? { mimeType } : {}),
-    videoBitsPerSecond: 2_500_000,
+    videoBitsPerSecond: opts.videoBitsPerSecond || 2_500_000,
   });
 
   let seq = 0;

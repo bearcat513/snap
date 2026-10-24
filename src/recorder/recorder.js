@@ -1,13 +1,15 @@
 // Recorder window (§6.5): getDisplayMedia needs a visible extension page and a user gesture.
 
 import { startRecording } from '../shared/recording.js';
-import { getSettings } from '../shared/settings.js';
+import { getSettings, recordingQuality } from '../shared/settings.js';
+import '../ui/theme.js';
 import { createJob, getJob, updateJob } from '../shared/jobs.js';
 import { formatDuration } from '../shared/util.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const settings = await getSettings();
+const quality = recordingQuality(settings);
 let job = params.get('job') ? await getJob(params.get('job')) : null;
 let rec = null;
 let startedAt = 0;
@@ -29,6 +31,11 @@ $('opt-mic').addEventListener('change', showMicHint);
 showMicHint();
 $('link-options').addEventListener('click', (e) => { e.preventDefault(); chrome.runtime.openOptionsPage(); });
 
+chrome.commands.getAll().then((cmds) => {
+  const key = cmds.find((c) => c.name === 'record-pause')?.shortcut;
+  if (key) { $('pause-key').textContent = key; $('pause-key').hidden = false; }
+});
+
 function show(id) {
   for (const s of ['setup', 'countdown', 'live', 'finishing']) $(s).hidden = s !== id;
 }
@@ -47,7 +54,8 @@ $('btn-start').addEventListener('click', async () => {
   try {
     // Must be called straight from the click (transient activation) — the picker is always shown.
     stream = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: 30 },
+      // No size constraints here: Chrome treats them as a target and upscales small windows.
+      video: { frameRate: { ideal: quality.fps, max: quality.fps } },
       audio: true,
       selfBrowserSurface: 'exclude',
       surfaceSwitching: 'include',
@@ -62,15 +70,16 @@ $('btn-start').addEventListener('click', async () => {
     if ($('opt-countdown').checked) await countdown();
     if (!job) job = await createJob({ kind: 'local', mode: 'record-window' });
     const track = stream.getVideoTracks()[0];
+    await capResolution(track);
     const ts = track.getSettings();
     // Track labels for screens/windows are internal ids like "screen:0:0"; only tab labels are readable.
     const title = ts.displaySurface === 'browser' && track.label && !/^(screen|window|web-contents-media-stream):/.test(track.label) ? track.label
       : ts.displaySurface === 'window' ? 'Window recording' : ts.displaySurface === 'browser' ? 'Tab recording' : 'Screen recording';
-    const source = { url: '', title, dpr: 1, width: ts.width, height: ts.height, surface: ts.displaySurface };
+    const source = { url: '', title, dpr: 1, width: ts.width, height: ts.height, surface: ts.displaySurface, fps: Math.round(ts.frameRate || quality.fps) };
     rec = await startRecording({
       jobId: job.id,
       stream,
-      opts: { mic: $('opt-mic').checked, maxMinutes: settings['recording.maxMinutes'], playback: false },
+      opts: { mic: $('opt-mic').checked, maxMinutes: settings['recording.maxMinutes'], playback: false, videoBitsPerSecond: quality.videoBitsPerSecond },
       source,
       servicenow: job.servicenow,
     });
@@ -100,6 +109,15 @@ $('btn-start').addEventListener('click', async () => {
     if (job) await updateJob(job.id, { state: 'failed', error: err.message });
   }
 });
+
+/** Scale the shared surface down (never up) to the resolution picked in Settings → Recording. */
+async function capResolution(track) {
+  const { width, height } = track.getSettings();
+  const scale = Math.min(1, quality.maxWidth / (width || Infinity), quality.maxHeight / (height || Infinity));
+  if (scale >= 1) return;
+  await track.applyConstraints({ width: Math.round(width * scale), height: Math.round(height * scale), frameRate: { max: quality.fps } })
+    .catch(() => { /* keep the native size */ });
+}
 
 function tick() {
   const now = pausedAt || Date.now();

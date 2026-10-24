@@ -17,8 +17,9 @@
   color-scheme: light;
 }
 
+/* Settings → Editor & appearance sets data-theme on <html> (src/ui/theme.js); "system" leaves it unset. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #14161a;
     --surface: #1c1f24;
     --surface-2: #252930;
@@ -35,6 +36,24 @@
     --stage: #0f1114;
     color-scheme: dark;
   }
+}
+
+:root[data-theme="dark"] {
+  --bg: #14161a;
+  --surface: #1c1f24;
+  --surface-2: #252930;
+  --border: #343a43;
+  --text: #e8eaed;
+  --muted: #9aa4b1;
+  --accent: #5b8cff;
+  --accent-text: #0b1020;
+  --accent-soft: #23304d;
+  --danger: #f2706a;
+  --warn: #f0a44b;
+  --ok: #4ade80;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 4px 12px rgba(0, 0, 0, .35);
+  --stage: #0f1114;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }

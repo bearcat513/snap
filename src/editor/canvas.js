@@ -4,9 +4,12 @@
 
 import { makeCanvas, redactRegion } from './redact.js';
 
-export const TOOLS = ['select', 'crop', 'arrow', 'rect', 'ellipse', 'text', 'highlight', 'step', 'blur'];
+export const TOOLS = ['select', 'crop', 'arrow', 'rect', 'ellipse', 'pen', 'text', 'highlight', 'step', 'blur'];
 const DRAG_TOOLS = new Set(['crop', 'arrow', 'rect', 'ellipse', 'highlight', 'blur']);
+const BOX_SHAPES = new Set(['rect', 'ellipse', 'highlight', 'blur', 'pen']);
 const MIN_SIZE = 4;
+const HANDLE_CSS_PX = 9; // on-screen size of resize handles
+const HANDLE_CURSORS = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', p1: 'move', p2: 'move' };
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
@@ -227,14 +230,86 @@ export class Annotator extends EventTarget {
       case 'arrow': return normRect({ x: p.x1, y: p.y1 }, { x: p.x2, y: p.y2 });
       case 'text': { const m = this.textMetrics(p); return { x: p.x, y: p.y, w: m.w, h: m.h }; }
       case 'step': { const r = this.stepRadius(); return { x: p.x - r, y: p.y - r, w: 2 * r, h: 2 * r }; }
+      case 'pen': {
+        const xs = p.points.map((q) => q[0]);
+        const ys = p.points.map((q) => q[1]);
+        const x = Math.min(...xs);
+        const y = Math.min(...ys);
+        return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+      }
       default: return { x: p.x, y: p.y, w: p.w, h: p.h };
     }
+  }
+
+  /** Image px per CSS px of the canvas as currently displayed. */
+  viewScale() {
+    const r = this.canvas.getBoundingClientRect();
+    return r.width ? this.canvas.width / r.width : 1;
+  }
+
+  /** Resize handles of a shape: [{ id, x, y }] in image px. Steps have none; text only scales from its corner. */
+  handles(s) {
+    if (s.type === 'arrow') return [{ id: 'p1', x: s.props.x1, y: s.props.y1 }, { id: 'p2', x: s.props.x2, y: s.props.y2 }];
+    const b = this.bounds(s);
+    if (s.type === 'text') return [{ id: 'se', x: b.x + b.w, y: b.y + b.h }];
+    if (!BOX_SHAPES.has(s.type)) return [];
+    const mx = b.x + b.w / 2;
+    const my = b.y + b.h / 2;
+    return [
+      { id: 'nw', x: b.x, y: b.y }, { id: 'n', x: mx, y: b.y }, { id: 'ne', x: b.x + b.w, y: b.y },
+      { id: 'e', x: b.x + b.w, y: my }, { id: 'se', x: b.x + b.w, y: b.y + b.h }, { id: 's', x: mx, y: b.y + b.h },
+      { id: 'sw', x: b.x, y: b.y + b.h }, { id: 'w', x: b.x, y: my },
+    ];
+  }
+
+  handleAt(pt) {
+    const s = this.selected;
+    if (!s || this.tool !== 'select') return null;
+    const tol = HANDLE_CSS_PX * this.viewScale();
+    return this.handles(s).find((h) => Math.abs(pt.x - h.x) <= tol && Math.abs(pt.y - h.y) <= tol) || null;
+  }
+
+  /** Apply a handle drag: `orig` is the shape's props and `ob` its bounds when the drag started. */
+  resizeShape(s, handle, orig, ob, p) {
+    if (s.type === 'arrow') {
+      if (handle === 'p1') Object.assign(s.props, { x1: p.x, y1: p.y }); else Object.assign(s.props, { x2: p.x, y2: p.y });
+      return;
+    }
+    if (s.type === 'text') {
+      const ratio = ob.w > 0 ? (p.x - ob.x) / ob.w : 1;
+      s.props.size = Math.round(Math.max(8 * this.unit, Math.min(200 * this.unit, orig.size * ratio)));
+      return;
+    }
+    let x1 = ob.x;
+    let y1 = ob.y;
+    let x2 = ob.x + ob.w;
+    let y2 = ob.y + ob.h;
+    if (handle.includes('w')) x1 = p.x;
+    if (handle.includes('e')) x2 = p.x;
+    if (handle.includes('n')) y1 = p.y;
+    if (handle.includes('s')) y2 = p.y;
+    const r = normRect({ x: x1, y: y1 }, { x: x2, y: y2 });
+    if (s.type === 'pen') {
+      // Map each point from the old box to the new one, keeping flips (dragging past the opposite edge).
+      const sx = ob.w ? (x2 - x1) / ob.w : 1;
+      const sy = ob.h ? (y2 - y1) / ob.h : 1;
+      s.props.points = orig.points.map(([x, y]) => [x1 + (x - ob.x) * sx, y1 + (y - ob.y) * sy]);
+      return;
+    }
+    Object.assign(s.props, s.type === 'blur' ? this.clampRect(r) : r);
   }
 
   hitTest(pt) {
     const tol = 6 * this.unit;
     for (let i = this.doc.shapes.length - 1; i >= 0; i--) {
       const s = this.doc.shapes[i];
+      if (s.type === 'pen') {
+        const pts = s.props.points;
+        for (let j = 1; j < pts.length; j++) {
+          if (distToSegment(pt, { x: pts[j - 1][0], y: pts[j - 1][1] }, { x: pts[j][0], y: pts[j][1] }) <= tol + s.props.width * this.unit) return s;
+        }
+        continue;
+      }
       if (s.type === 'arrow') {
         if (distToSegment(pt, { x: s.props.x1, y: s.props.y1 }, { x: s.props.x2, y: s.props.y2 }) <= tol + s.props.width) return s;
         continue;
@@ -287,7 +362,17 @@ export class Annotator extends EventTarget {
       return;
     }
     this.canvas.setPointerCapture(e.pointerId);
+    if (this.tool === 'pen') {
+      this.draft = { type: 'pen', points: [[p.x, p.y]] };
+      return;
+    }
     if (this.tool === 'select') {
+      const handle = this.handleAt(p);
+      if (handle) {
+        const s = this.selected;
+        this.drag = { resize: handle.id, start: p, orig: clone(s.props), bounds: this.bounds(s), id: s.id, moved: false };
+        return;
+      }
       const hit = this.hitTest(p);
       this.selectedId = hit ? hit.id : null;
       if (hit) this.drag = { start: p, orig: clone(hit.props), id: hit.id, moved: false };
@@ -306,9 +391,17 @@ export class Annotator extends EventTarget {
       const dx = p.x - this.drag.start.x;
       const dy = p.y - this.drag.start.y;
       const o = this.drag.orig;
-      if (s.type === 'arrow') Object.assign(s.props, { x1: o.x1 + dx, y1: o.y1 + dy, x2: o.x2 + dx, y2: o.y2 + dy });
+      if (this.drag.resize) this.resizeShape(s, this.drag.resize, o, this.drag.bounds, p);
+      else if (s.type === 'arrow') Object.assign(s.props, { x1: o.x1 + dx, y1: o.y1 + dy, x2: o.x2 + dx, y2: o.y2 + dy });
+      else if (s.type === 'pen') s.props.points = o.points.map(([x, y]) => [x + dx, y + dy]);
       else Object.assign(s.props, { x: o.x + dx, y: o.y + dy });
       this.drag.moved = true;
+      this.render();
+      return;
+    }
+    if (this.draft?.type === 'pen') {
+      const [lx, ly] = this.draft.points[this.draft.points.length - 1];
+      if (Math.hypot(p.x - lx, p.y - ly) >= 1.5 * this.viewScale()) this.draft.points.push([p.x, p.y]);
       this.render();
       return;
     }
@@ -317,7 +410,10 @@ export class Annotator extends EventTarget {
       this.render();
       return;
     }
-    if (this.tool === 'select') this.canvas.style.cursor = this.hitTest(p) ? 'move' : 'default';
+    if (this.tool === 'select') {
+      const handle = this.handleAt(p);
+      this.canvas.style.cursor = handle ? HANDLE_CURSORS[handle.id] : this.hitTest(p) ? 'move' : 'default';
+    }
   }
 
   onUp() {
@@ -330,6 +426,13 @@ export class Annotator extends EventTarget {
     const d = this.draft;
     this.draft = null;
     if (!d) return;
+    if (d.type === 'pen') {
+      if (d.points.length > 1) {
+        const points = d.points.map(([x, y]) => [Math.round(x * 10) / 10, Math.round(y * 10) / 10]);
+        this.addShape('pen', { points, color: this.color, width: this.strokeWidth });
+      } else this.render();
+      return;
+    }
     const { start, end, type } = d;
     if (type === 'arrow') {
       if (Math.hypot(end.x - start.x, end.y - start.y) >= MIN_SIZE * 2) {
@@ -397,6 +500,7 @@ export class Annotator extends EventTarget {
       if (s.type === 'rect') this.drawRect(ctx, s.props);
       else if (s.type === 'ellipse') this.drawEllipse(ctx, s.props);
       else if (s.type === 'arrow') this.drawArrow(ctx, s.props);
+      else if (s.type === 'pen') this.drawPen(ctx, s.props);
       else if (s.type === 'text') this.drawText(ctx, s.props);
       else if (s.type === 'step') this.drawStep(ctx, s.props, ++step);
     }
@@ -411,7 +515,16 @@ export class Annotator extends EventTarget {
         ctx.setLineDash([6 * this.unit, 4 * this.unit]);
         ctx.lineWidth = 1.5 * this.unit;
         ctx.strokeStyle = '#2563eb';
-        ctx.strokeRect(b.x - pad, b.y - pad, b.w + 2 * pad, b.h + 2 * pad);
+        if (sel.type !== 'arrow') ctx.strokeRect(b.x - pad, b.y - pad, b.w + 2 * pad, b.h + 2 * pad);
+        if (this.tool === 'select') {
+          const size = HANDLE_CSS_PX * this.viewScale();
+          ctx.setLineDash([]);
+          ctx.fillStyle = '#fff';
+          for (const h of this.handles(sel)) {
+            ctx.fillRect(h.x - size / 2, h.y - size / 2, size, size);
+            ctx.strokeRect(h.x - size / 2, h.y - size / 2, size, size);
+          }
+        }
         ctx.restore();
       }
       const crop = this.draft && this.draft.type === 'crop' ? this.clampRect(normRect(this.draft.start, this.draft.end)) : this.doc.crop;
@@ -434,6 +547,7 @@ export class Annotator extends EventTarget {
 
   drawDraft(ctx, d) {
     if (d.type === 'crop') return; // drawn with the crop overlay
+    if (d.type === 'pen') { this.drawPen(ctx, { points: d.points, color: this.color, width: this.strokeWidth }); return; }
     const r = normRect(d.start, d.end);
     if (d.type === 'arrow') {
       this.drawArrow(ctx, { x1: d.start.x, y1: d.start.y, x2: d.end.x, y2: d.end.y, color: this.color, width: this.strokeWidth });
@@ -493,6 +607,25 @@ export class Annotator extends EventTarget {
     ctx.lineTo(p.x2 - head * Math.cos(angle + Math.PI / 7), p.y2 - head * Math.sin(angle + Math.PI / 7));
     ctx.closePath();
     ctx.fill();
+    ctx.restore();
+  }
+
+  drawPen(ctx, p) {
+    const pts = p.points;
+    ctx.save();
+    ctx.strokeStyle = p.color;
+    ctx.lineWidth = p.width * this.unit;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    // Quadratic curves through segment midpoints smooth out pointer jitter.
+    for (let i = 1; i < pts.length - 1; i++) {
+      ctx.quadraticCurveTo(pts[i][0], pts[i][1], (pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2);
+    }
+    const last = pts[pts.length - 1];
+    ctx.lineTo(last[0], last[1]);
+    ctx.stroke();
     ctx.restore();
   }
 

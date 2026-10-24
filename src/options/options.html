@@ -81,6 +81,42 @@
       </label>
     </section>
 
+    <section id="tab-editor" class="panel" role="tabpanel" data-tab="editor" data-title="Editor &amp; appearance">
+      <h2>Editor &amp; appearance</h2>
+      <label class="field narrow-select"><span>Theme</span>
+        <select data-key="ui.theme"><option value="system">Match the system</option><option value="light">Light</option><option value="dark">Dark</option></select>
+      </label>
+      <fieldset>
+        <legend>Annotation defaults</legend>
+        <div class="cols four">
+          <label class="field"><span>Tool</span>
+            <select data-key="editor.defaultTool">
+              <option value="arrow">Arrow</option><option value="rect">Box</option><option value="ellipse">Ellipse</option>
+              <option value="pen">Pen</option><option value="text">Text</option><option value="highlight">Highlight</option>
+              <option value="step">Step marker</option><option value="blur">Redact</option><option value="select">Select</option>
+            </select>
+          </label>
+          <label class="field"><span>Color</span><input type="color" data-key="editor.defaultColor"></label>
+          <label class="field"><span>Stroke width</span>
+            <select data-key="editor.defaultWidth" data-number><option value="2">Thin</option><option value="4">Medium</option><option value="8">Thick</option></select>
+          </label>
+          <label class="field"><span>Redaction style</span>
+            <select data-key="editor.defaultBlurMode"><option value="pixelate">Pixelate</option><option value="blur">Blur</option></select>
+          </label>
+        </div>
+      </fieldset>
+      <label class="check"><input type="checkbox" data-key="editor.rememberStyle"> Start with the tool, color and width I used last (overrides the defaults above)</label>
+      <fieldset>
+        <legend>Color palette</legend>
+        <p class="small muted">The swatches shown in the editor's toolbar, up to 16.</p>
+        <ul id="palette" class="palette"></ul>
+        <div class="row">
+          <button id="btn-add-color">＋ Add color</button>
+          <button id="btn-reset-palette" class="ghost">Reset to defaults</button>
+        </div>
+      </fieldset>
+    </section>
+
     <section id="tab-recording" class="panel" role="tabpanel" data-tab="recording" data-title="Recording">
       <h2>Recording</h2>
       <label class="field narrow"><span>Maximum length (minutes)</span><input type="number" min="1" max="120" data-key="recording.maxMinutes"></label>
@@ -92,6 +128,21 @@
       <p class="small muted">Chrome only lets extensions ask for the microphone from a visible page, so grant it once here.</p>
       <label class="check"><input type="checkbox" data-key="recording.countdown"> 3-2-1 countdown before recording</label>
       <label class="check"><input type="checkbox" data-key="recording.clickHighlights"> Highlight clicks while recording a tab</label>
+      <label class="check"><input type="checkbox" data-key="recording.keystrokes"> Show keyboard shortcuts and keys pressed while recording a tab</label>
+      <p class="small muted">Keys typed into password fields are never shown. Plain typing in text boxes is shown as “typing…”, not as the characters.</p>
+      <fieldset>
+        <legend>Quality</legend>
+        <div class="cols three">
+          <label class="field"><span>Resolution (maximum)</span>
+            <select data-key="recording.quality"><option value="720p">720p</option><option value="1080p">1080p</option><option value="1440p">1440p</option><option value="source">Source (up to 4K)</option></select>
+          </label>
+          <label class="field"><span>Frame rate</span>
+            <select data-key="recording.fps" data-number><option value="15">15 fps</option><option value="24">24 fps</option><option value="30">30 fps</option><option value="60">60 fps</option></select>
+          </label>
+          <label class="field"><span>Bitrate (Mbps)</span><input type="number" min="0.5" max="50" step="0.5" data-key="recording.bitrateMbps"></label>
+        </div>
+        <p class="small muted">Higher settings make larger files. About <span id="size-estimate"></span> per minute at this bitrate.</p>
+      </fieldset>
     </section>
 
     <section id="tab-servicenow" class="panel" role="tabpanel" data-tab="servicenow" data-title="ServiceNow instances">

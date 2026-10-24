@@ -1,6 +1,7 @@
 import { listCaptures, getBlob } from '../shared/db.js';
 import { isCapturableUrl, formatDuration } from '../shared/util.js';
 import { getSettings, setSettings } from '../shared/settings.js';
+import '../ui/theme.js';
 
 const $ = (id) => document.getElementById(id);
 const send = (msg) => chrome.runtime.sendMessage(msg);

@@ -18,7 +18,15 @@ code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: va
 .hosts, .shortcuts { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .hosts li, .shortcuts li { display: flex; align-items: center; gap: 8px; }
 .hosts li code { flex: 1; }
-@media (max-width: 600px) { .cols { grid-template-columns: 1fr; } }
+.cols.three { grid-template-columns: repeat(3, 1fr); }
+.cols.four { grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.narrow-select select { max-width: 240px; }
+input[type="color"] { width: 100%; height: 32px; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
+.palette { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.palette li { display: flex; align-items: center; gap: 2px; border: 1px solid var(--border); border-radius: 6px; padding: 2px 2px 2px 4px; background: var(--surface-2); }
+.palette input[type="color"] { width: 36px; height: 26px; border: 0; background: transparent; }
+.palette button { padding: 0 6px; }
+@media (max-width: 600px) { .cols, .cols.three, .cols.four { grid-template-columns: 1fr; } }
 
 .editable-list { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .editable-list > li { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; background: var(--surface-2); }

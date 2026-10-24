@@ -21,6 +21,7 @@ section { margin-bottom: 14px; }
 .recording.paused .dot { background: var(--warn); animation: none; }
 @keyframes pulse { 50% { opacity: .3; } }
 .rec-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.rec-actions kbd:empty { display: none; }
 
 .row-head { display: flex; align-items: center; justify-content: space-between; }
 .row-head h2 { margin: 0; }

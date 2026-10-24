@@ -1,7 +1,7 @@
 // Recording orchestration (§6.4–6.6). Tab recordings run in the offscreen document; window/screen
 // recordings run in the recorder window (getDisplayMedia needs a visible page and a gesture).
 
-import { getSettings } from '../shared/settings.js';
+import { getSettings, recordingQuality } from '../shared/settings.js';
 import { createJob, getJob, updateJob } from '../shared/jobs.js';
 import { ensureOffscreen, closeOffscreen, sendToOffscreen } from './offscreen-client.js';
 import { getRecording, setRecording, getFlag } from './state.js';
@@ -16,12 +16,13 @@ export async function startTabRecording(tab, { job } = {}) {
   if (settings['recording.countdown']) await runCountdown(tab.id).catch(() => {});
   const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
   await ensureOffscreen();
-  const source = { url: tab.url || '', title: tab.title || '', tabId: tab.id, dpr: 1, width: tab.width, height: tab.height };
+  const quality = recordingQuality(settings);
+  const source = { url: tab.url || '', title: tab.title || '', tabId: tab.id, dpr: 1, width: tab.width, height: tab.height, fps: quality.fps };
   const res = await sendToOffscreen({
     type: 'record:start',
     jobId: job.id,
     streamId,
-    opts: { mic: settings['recording.mic'], maxMinutes: settings['recording.maxMinutes'], playback: true },
+    opts: { mic: settings['recording.mic'], maxMinutes: settings['recording.maxMinutes'], playback: true, quality, videoBitsPerSecond: quality.videoBitsPerSecond },
     source,
     servicenow: job.servicenow,
   });
@@ -31,11 +32,14 @@ export async function startTabRecording(tab, { job } = {}) {
     throw new Error(res?.error || 'Could not start the recording.');
   }
   await setRecording({ jobId: job.id, kind: 'tab', tabId: tab.id, startedAt: Date.now(), paused: false, pausedTotal: 0 });
-  if (settings['recording.clickHighlights']) {
-    chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: ['src/content/click-highlight.js'] })
-      .catch(() => chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['src/content/click-highlight.js'] }).catch(() => {}));
-  }
+  if (settings['recording.clickHighlights']) injectOverlay(tab.id, 'src/content/click-highlight.js');
+  if (settings['recording.keystrokes']) injectOverlay(tab.id, 'src/content/keystrokes.js');
   return job;
+}
+
+function injectOverlay(tabId, file) {
+  chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: [file] })
+    .catch(() => chrome.scripting.executeScript({ target: { tabId }, files: [file] }).catch(() => {}));
 }
 
 export async function openRecorderWindow(job) {
@@ -71,6 +75,12 @@ export async function resumeRecording() {
   }
 }
 
+export async function togglePauseRecording() {
+  const rec = await getRecording();
+  if (!rec) return;
+  if (rec.paused) await resumeRecording(); else await pauseRecording();
+}
+
 export async function stopRecording() {
   return sendControl('record:stop');
 }
@@ -84,7 +94,7 @@ export async function onRecordingEnded(jobId) {
     if (rec.tabId) {
       chrome.scripting.executeScript({
         target: { tabId: rec.tabId, allFrames: true },
-        func: () => window.__snapClickHighlight && window.__snapClickHighlight.stop(),
+        func: () => { window.__snapClickHighlight?.stop(); window.__snapKeystrokes?.stop(); },
       }).catch(() => {});
     }
     await closeOffscreen();

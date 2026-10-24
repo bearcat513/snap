@@ -278,6 +278,19 @@ try {
       await seekTo(2.5);
       await evalIn(vS, `document.getElementById('btn-add-key').click()`);
       await sleep(1200);
+
+      // Keyboard transport: '.' steps one frame, Home jumps to the trim start.
+      await seekTo(1.0);
+      await evalIn(vS, `document.activeElement.blur()`);
+      const now = () => evalIn(vS, `document.getElementById('video').currentTime`);
+      await b.send('Input.dispatchKeyEvent', { type: 'keyDown', key: '.', text: '.' }, vS);
+      await sleep(300);
+      const stepped = await now();
+      check('"." steps one frame forward', stepped > 1.02 && stepped < 1.05, String(stepped));
+      await b.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Home', code: 'Home', windowsVirtualKeyCode: 36 }, vS);
+      await sleep(300);
+      check('Home jumps to the trim start', Math.abs((await now()) - 0.5) < 0.01, String(await now()));
+
       await seekTo(1.5);
       await sleep(300);
       await shot(vS, 'video-editor');

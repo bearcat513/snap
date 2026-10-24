@@ -5,7 +5,7 @@ import { getCapture, updateCapture, getBlob, putBlob, del, listCaptures } from '
 import { getJob } from '../shared/jobs.js';
 import { thumbnailFromSource } from '../shared/image.js';
 import { formatBytes, formatDuration } from '../shared/util.js';
-import { Annotator } from './canvas.js';
+import { Annotator, TOOLS } from './canvas.js';
 import { ExportFactory } from './export/files.js';
 import { ContextForm } from './context-form.js';
 import { VideoEditor } from './video-editor.js';
@@ -13,6 +13,7 @@ import { renderLibrary } from './library.js';
 import { toast, confirmDialog, el } from './ui.js';
 import { getAdapter, SAVE_ORDER } from '../storage/adapter.js';
 import { ensureS3Permission } from '../storage/s3.js';
+import '../ui/theme.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -106,11 +107,48 @@ async function setupImage() {
   annotator.addEventListener('select', syncToolState);
   annotator.addEventListener('text-request', (e) => openTextInput(e.detail));
   annotator.addEventListener('text-edit', (e) => openTextInput(e.detail));
-  setTool('arrow');
-  setColor('#e5484d');
-  setWidth(4);
-  setBlurMode('pixelate');
+  const style = initialStyle();
+  renderSwatches(style.color);
+  setTool(style.tool);
+  setColor(style.color);
+  setWidth(style.width);
+  setBlurMode(style.blurMode);
   syncToolState();
+}
+
+// Annotation style: Settings → Editor defaults, or the last style used when "remember" is on.
+const STYLE_KEY = 'snap.editorStyle';
+
+function initialStyle() {
+  const style = {
+    tool: settings['editor.defaultTool'],
+    color: settings['editor.defaultColor'],
+    width: Number(settings['editor.defaultWidth']),
+    blurMode: settings['editor.defaultBlurMode'],
+  };
+  if (settings['editor.rememberStyle']) {
+    try { Object.assign(style, JSON.parse(localStorage.getItem(STYLE_KEY) || '{}')); } catch { /* use defaults */ }
+  }
+  if (!TOOLS.includes(style.tool) || style.tool === 'crop') style.tool = 'arrow';
+  if (![2, 4, 8].includes(style.width)) style.width = 4;
+  if (!['pixelate', 'blur'].includes(style.blurMode)) style.blurMode = 'pixelate';
+  if (!/^#[0-9a-f]{6}$/i.test(style.color || '')) style.color = settings['editor.palette'][0];
+  return style;
+}
+
+function rememberStyle(patch) {
+  if (!settings['editor.rememberStyle']) return;
+  try {
+    const cur = JSON.parse(localStorage.getItem(STYLE_KEY) || '{}');
+    localStorage.setItem(STYLE_KEY, JSON.stringify({ ...cur, ...patch }));
+  } catch { /* convenience only */ }
+}
+
+function renderSwatches(extra) {
+  const colors = settings['editor.palette'].includes(extra?.toLowerCase()) || !extra ? settings['editor.palette'] : [extra.toLowerCase(), ...settings['editor.palette']];
+  $('swatches').replaceChildren(...colors.map((c) => el('button', {
+    'data-color': c, title: c, 'aria-label': `Color ${c}`, style: `--c:${c}`, onclick: () => setColor(c),
+  })));
 }
 
 function setTool(tool) {
@@ -118,18 +156,22 @@ function setTool(tool) {
   commitText();
   annotator.setTool(tool);
   document.querySelectorAll('[data-tool]').forEach((b) => b.classList.toggle('active', b.dataset.tool === tool));
+  if (tool !== 'crop') rememberStyle({ tool });
 }
 function setColor(color) {
   annotator?.setColor(color);
-  document.querySelectorAll('[data-color]').forEach((b) => b.classList.toggle('active', b.dataset.color === color));
+  document.querySelectorAll('[data-color]').forEach((b) => b.classList.toggle('active', b.dataset.color === color.toLowerCase()));
+  rememberStyle({ color });
 }
 function setWidth(w) {
   annotator?.setStrokeWidth(w);
   document.querySelectorAll('[data-width]').forEach((b) => b.classList.toggle('active', Number(b.dataset.width) === w));
+  rememberStyle({ width: w });
 }
 function setBlurMode(mode) {
   annotator?.setBlurMode(mode);
   document.querySelectorAll('[data-blur]').forEach((b) => b.classList.toggle('active', b.dataset.blur === mode));
+  rememberStyle({ blurMode: mode });
 }
 
 function syncToolState() {
@@ -141,20 +183,76 @@ function syncToolState() {
 }
 
 document.querySelectorAll('[data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
-document.querySelectorAll('[data-color]').forEach((b) => b.addEventListener('click', () => setColor(b.dataset.color)));
 document.querySelectorAll('[data-width]').forEach((b) => b.addEventListener('click', () => setWidth(Number(b.dataset.width))));
 document.querySelectorAll('[data-blur]').forEach((b) => b.addEventListener('click', () => { setBlurMode(b.dataset.blur); setTool('blur'); }));
 $('btn-undo').addEventListener('click', () => annotator?.undo());
 $('btn-redo').addEventListener('click', () => annotator?.redo());
 $('btn-delete').addEventListener('click', () => annotator?.deleteSelected());
 $('btn-clear-crop').addEventListener('click', () => annotator?.clearCrop());
-$('btn-zoom').addEventListener('click', () => {
-  const wrap = $('canvas-wrap');
-  const actual = wrap.classList.toggle('actual');
+
+// Zoom: null = fit to the stage; otherwise a factor of the capture's CSS size (1 = 100%).
+const ZOOM_MIN = 0.1;
+const ZOOM_MAX = 8;
+let zoom = null;
+
+function currentZoom() {
+  if (zoom) return zoom;
+  const canvas = $('canvas');
+  return canvas.getBoundingClientRect().width / (canvas.width / (capture?.source?.dpr || 1));
+}
+
+/** Set the zoom; `anchor` (client x/y) stays over the same image point, else the view center does. */
+function setZoom(next, anchor) {
+  if (!annotator) return;
+  commitText();
+  const stage = $('stage');
+  const canvas = $('canvas');
+  const before = canvas.getBoundingClientRect();
+  const sr = stage.getBoundingClientRect();
+  const ax = anchor?.x ?? sr.left + sr.width / 2;
+  const ay = anchor?.y ?? sr.top + sr.height / 2;
+  const fx = (ax - before.left) / before.width;
+  const fy = (ay - before.top) / before.height;
+
+  zoom = next === null ? null : Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next));
   const dpr = capture?.source?.dpr || 1;
-  $('canvas').style.width = actual ? `${$('canvas').width / dpr}px` : '';
-  $('btn-zoom').querySelector('span').textContent = actual ? '1:1' : 'Fit';
-});
+  $('canvas-wrap').classList.toggle('actual', zoom !== null);
+  stage.classList.toggle('zoomed', zoom !== null);
+  canvas.style.width = zoom === null ? '' : `${(canvas.width / dpr) * zoom}px`;
+  $('btn-zoom').querySelector('span').textContent = zoom === null ? 'Fit' : `${Math.round(zoom * 100)}%`;
+  if (zoom === null) return;
+  const after = canvas.getBoundingClientRect();
+  stage.scrollLeft += after.left + fx * after.width - ax;
+  stage.scrollTop += after.top + fy * after.height - ay;
+}
+
+const zoomBy = (factor, anchor) => setZoom(currentZoom() * factor, anchor);
+
+$('btn-zoom').addEventListener('click', () => setZoom(zoom === null ? 1 : null));
+$('btn-zoom-in').addEventListener('click', () => zoomBy(1.25));
+$('btn-zoom-out').addEventListener('click', () => zoomBy(0.8));
+$('stage').addEventListener('wheel', (e) => {
+  if (!annotator || !(e.ctrlKey || e.metaKey)) return;
+  e.preventDefault(); // also stops the browser's page zoom (trackpad pinch arrives as ctrl+wheel)
+  zoomBy(Math.exp(-e.deltaY / 300), { x: e.clientX, y: e.clientY });
+}, { passive: false });
+
+// ---------------------------------------------------------------- copy & help
+
+async function copyImage() {
+  if (!annotator) return;
+  try {
+    commitText();
+    const blob = await new Promise((r) => annotator.exportCanvas().toBlob(r, 'image/png'));
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    toast('Image copied to the clipboard.');
+  } catch (err) {
+    toast(`Copy failed: ${err.message}`);
+  }
+}
+
+$('btn-copy').addEventListener('click', copyImage);
+$('btn-help').addEventListener('click', () => $('help-dialog').showModal());
 
 // Text annotations are typed into a textarea laid over the canvas.
 let textState = null;
@@ -204,23 +302,41 @@ $('text-input').addEventListener('keydown', (e) => {
   e.stopPropagation();
 });
 
-const KEY_TOOLS = { v: 'select', c: 'crop', a: 'arrow', r: 'rect', e: 'ellipse', t: 'text', h: 'highlight', n: 'step', b: 'blur' };
+const KEY_TOOLS = { v: 'select', c: 'crop', a: 'arrow', r: 'rect', e: 'ellipse', p: 'pen', t: 'text', h: 'highlight', n: 'step', b: 'blur' };
+
+function videoKey(e) {
+  const v = videoEditor;
+  // The native player and the timeline handle Space/arrows themselves while focused.
+  const own = document.activeElement === $('video') || document.activeElement === $('timeline');
+  if ((e.key === 'Delete' || e.key === 'Backspace') && v.deleteSelected()) e.preventDefault();
+  else if (e.key === 'Escape') v.setRedactMode(false);
+  else if (e.key === 'k') v.addKeyframe();
+  else if (e.key === '[') v.setIn(v.nowMs);
+  else if (e.key === ']') v.setOut(v.nowMs);
+  else if (e.key === ',' || e.key === '.') v.stepFrames(e.key === ',' ? -1 : 1);
+  else if (e.key === 'Home') v.seekTo(v.range()[0]);
+  else if (e.key === 'End') v.seekTo(v.range()[1]);
+  else if (own) return;
+  else if (e.key === ' ') v.togglePlay();
+  else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') v.seekBy((e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 5000 : 1000));
+  else return;
+  e.preventDefault();
+}
 
 document.addEventListener('keydown', (e) => {
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); save(); return; }
-  if (!typing && videoEditor && !mod) {
-    if ((e.key === 'Delete' || e.key === 'Backspace') && videoEditor.deleteSelected()) e.preventDefault();
-    if (e.key === 'Escape') videoEditor.setRedactMode(false);
-    if (e.key === 'k') videoEditor.addKeyframe();
-    if (e.key === '[') videoEditor.setIn(videoEditor.nowMs);
-    if (e.key === ']') videoEditor.setOut(videoEditor.nowMs);
-    return;
-  }
-  if (typing || !annotator) return;
+  if (typing || $('help-dialog').open) return;
+  if (e.key === '?') { e.preventDefault(); $('help-dialog').showModal(); return; }
+  if (videoEditor && !mod) { videoKey(e); return; }
+  if (!annotator) return;
   if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) annotator.redo(); else annotator.undo(); return; }
   if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); annotator.redo(); return; }
+  if (mod && (e.key === '=' || e.key === '+')) { e.preventDefault(); zoomBy(1.25); return; }
+  if (mod && e.key === '-') { e.preventDefault(); zoomBy(0.8); return; }
+  if (mod && e.key === '0') { e.preventDefault(); setZoom(zoom === null ? 1 : null); return; }
+  if (mod && e.key.toLowerCase() === 'c' && !e.shiftKey && !String(window.getSelection())) { e.preventDefault(); copyImage(); return; }
   if (mod || e.altKey) return;
   if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); annotator.deleteSelected(); return; }
   if (e.key === 'Escape') { setTool('select'); return; }
@@ -549,16 +665,7 @@ document.addEventListener('click', () => { menu.hidden = true; $('btn-export').s
 menu.querySelectorAll('[data-export]').forEach((b) => b.addEventListener('click', async () => {
   menu.hidden = true;
   const fmt = b.dataset.export;
-  if (fmt === 'clipboard') {
-    try {
-      const blob = await new Promise((r) => annotator.exportCanvas().toBlob(r, 'image/png'));
-      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-      toast('Image copied to the clipboard.');
-    } catch (err) {
-      toast(`Copy failed: ${err.message}`);
-    }
-    return;
-  }
+  if (fmt === 'clipboard') { copyImage(); return; }
   save([{ id: 'download', formats: [fmt] }]);
 }));
 
