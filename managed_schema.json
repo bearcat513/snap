@@ -86,6 +86,10 @@
           },
           "required": {
             "type": "boolean"
+          },
+          "placeholder": {
+            "type": "string",
+            "description": "Hint text shown in the empty field"
           }
         }
       }
@@ -126,6 +130,58 @@
               "type": "string"
             },
             "description": "ServiceNow tables whose /snap captures get this template automatically"
+          },
+          "placeholders": {
+            "type": "object",
+            "description": "Hint text for the built-in fields while this template is active",
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "notes": {
+                "type": "string"
+              }
+            }
+          },
+          "fields": {
+            "type": "array",
+            "description": "Extra fields shown only while this template is active",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "text",
+                    "textarea",
+                    "select"
+                  ]
+                },
+                "options": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "required": {
+                  "type": "boolean"
+                },
+                "placeholder": {
+                  "type": "string",
+                  "description": "Hint text shown in the empty field"
+                },
+                "default": {
+                  "type": "string",
+                  "description": "Value filled in when the template is applied"
+                }
+              }
+            }
           }
         }
       }

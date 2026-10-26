@@ -4,6 +4,7 @@
 import { putBlob, getBlob, getCapture, updateCapture, del } from '../../shared/db.js';
 import { captureBaseName, extensionForMime } from '../../shared/naming.js';
 import { formatDuration } from '../../shared/util.js';
+import { contextFields } from '../../shared/settings.js';
 import { buildPdf } from './pdf.js';
 import { GifEncoder, buildPalette } from './gif.js';
 import { buildVtt, transcriptText } from '../../shared/captions.js';
@@ -99,11 +100,12 @@ export function environmentLine(capture) {
   ].filter(Boolean).join(' · ');
 }
 
-/** [{ label, value }] for filled custom fields, in settings order. */
+/** [{ label, value }] for filled custom and template fields, in settings order. */
 export function customFieldValues(capture, settings) {
   const values = capture.context?.custom || {};
-  const known = (settings.customFields || []).map((f) => ({ label: f.label, value: values[f.id] }));
-  const knownIds = new Set((settings.customFields || []).map((f) => f.id));
+  const fields = contextFields(settings, capture.context);
+  const known = fields.map((f) => ({ label: f.label, value: values[f.id] }));
+  const knownIds = new Set(fields.map((f) => f.id));
   const extra = Object.entries(values).filter(([id]) => !knownIds.has(id)).map(([id, value]) => ({ label: id, value }));
   return [...known, ...extra].filter((f) => f.value && String(f.value).trim());
 }

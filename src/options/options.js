@@ -149,26 +149,37 @@ function saveList(key, value) {
   }, 400);
 }
 
+/**
+ * One editable field row: label, type, required, placeholder, choice options and (for template
+ * fields) a default value. Shared by Custom fields and each template's own fields.
+ */
+function fieldRow(f, { locked, save, remove, withDefault = false }) {
+  const opts = h('label', { class: 'field opts', hidden: f.type !== 'select' }, h('span', { text: 'Options (comma separated)' }),
+    h('input', { type: 'text', value: (f.options || []).join(', '), disabled: locked, oninput: (e) => { f.options = e.target.value.split(',').map((o) => o.trim()).filter(Boolean); save(); } }));
+  const type = h('select', { disabled: locked, 'aria-label': 'Field type', onchange: (e) => { f.type = e.target.value; opts.hidden = f.type !== 'select'; save(); } },
+    h('option', { value: 'text', text: 'Single line' }), h('option', { value: 'textarea', text: 'Multi-line' }), h('option', { value: 'select', text: 'Choice' }));
+  type.value = f.type || 'text';
+  return h('li', {},
+    h('div', { class: 'grid' },
+      h('input', { type: 'text', placeholder: 'Label, e.g. Environment', 'aria-label': 'Field label', value: f.label, disabled: locked, oninput: (e) => { f.label = e.target.value; save(); } }),
+      type,
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: f.required, disabled: locked, onchange: (e) => { f.required = e.target.checked; save(); } }), 'Required'),
+      locked ? null : h('button', { class: 'ghost danger', onclick: remove }, 'Remove')),
+    h('div', { class: 'tpl-grid opts' },
+      h('label', {}, h('span', { text: 'Placeholder text (optional)' }),
+        h('input', { type: 'text', value: f.placeholder || '', disabled: locked, oninput: (e) => { f.placeholder = e.target.value; save(); } })),
+      withDefault ? h('label', {}, h('span', { text: 'Default value (optional)' }),
+        h('input', { type: 'text', value: f.default || '', disabled: locked, oninput: (e) => { f.default = e.target.value || undefined; save(); } })) : null),
+    opts);
+}
+
 let fields = [];
 function renderFields() {
   const locked = settings.locked.includes('customFields');
   $('cf-locked').hidden = !locked;
   $('btn-add-field').hidden = locked;
   const save = () => saveList('customFields', fields.filter((f) => f.label.trim()));
-  $('custom-fields').replaceChildren(...fields.map((f, i) => {
-    const opts = h('label', { class: 'field opts', hidden: f.type !== 'select' }, h('span', { text: 'Options (comma separated)' }),
-      h('input', { type: 'text', value: (f.options || []).join(', '), disabled: locked, oninput: (e) => { f.options = e.target.value.split(',').map((o) => o.trim()).filter(Boolean); save(); } }));
-    const type = h('select', { disabled: locked, 'aria-label': 'Field type', onchange: (e) => { f.type = e.target.value; opts.hidden = f.type !== 'select'; save(); } },
-      h('option', { value: 'text', text: 'Single line' }), h('option', { value: 'textarea', text: 'Multi-line' }), h('option', { value: 'select', text: 'Choice' }));
-    type.value = f.type || 'text';
-    return h('li', {},
-      h('div', { class: 'grid' },
-        h('input', { type: 'text', placeholder: 'Label, e.g. Environment', 'aria-label': 'Field label', value: f.label, disabled: locked, oninput: (e) => { f.label = e.target.value; save(); } }),
-        type,
-        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: f.required, disabled: locked, onchange: (e) => { f.required = e.target.checked; save(); } }), 'Required'),
-        locked ? null : h('button', { class: 'ghost danger', onclick: () => { fields.splice(i, 1); save(); renderFields(); } }, 'Remove')),
-      opts);
-  }));
+  $('custom-fields').replaceChildren(...fields.map((f, i) => fieldRow(f, { locked, save, remove: () => { fields.splice(i, 1); save(); renderFields(); } })));
   if (!fields.length) $('custom-fields').append(h('li', { class: 'muted small', text: 'No extra fields.' }));
 }
 $('btn-add-field').addEventListener('click', () => { fields.push({ label: '', type: 'text', required: false }); renderFields(); $('custom-fields').querySelector('li:last-child input')?.focus(); });
@@ -178,21 +189,35 @@ function renderTemplates() {
   const locked = settings.locked.includes('templates');
   $('tpl-locked').hidden = !locked;
   $('btn-add-template').hidden = locked;
-  const save = () => saveList('templates', templates.filter((t) => t.name.trim()));
-  $('templates').replaceChildren(...templates.map((t, i) => h('li', {},
-    h('div', { class: 'tpl-grid' },
-      h('label', {}, h('span', { text: 'Name' }), h('input', { type: 'text', value: t.name, disabled: locked, oninput: (e) => { t.name = e.target.value; save(); } })),
-      h('label', {}, h('span', { text: 'Tags (comma separated)' }), h('input', { type: 'text', value: (t.tags || []).join(', '), disabled: locked, oninput: (e) => { t.tags = e.target.value.split(',').map((x) => x.trim()).filter(Boolean); save(); } })),
-      h('label', { class: 'wide' }, h('span', { text: 'Apply automatically to /snap captures from these tables (comma separated, optional)' }),
-        h('input', { type: 'text', placeholder: 'incident, problem', value: (t.tables || []).join(', '), disabled: locked, oninput: (e) => { t.tables = e.target.value.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean); save(); } })),
-      h('label', { class: 'wide' }, h('span', { text: 'Description' }), h('input', { type: 'text', value: t.description, disabled: locked, oninput: (e) => { t.description = e.target.value; save(); } })),
-      h('label', {}, h('span', { text: 'Notes' }), h('textarea', { rows: 4, value: t.notes, disabled: locked, oninput: (e) => { t.notes = e.target.value; save(); } })),
-      h('label', {}, h('span', { text: 'Steps (one per line)' }), h('textarea', { rows: 4, value: (t.steps || []).join('\n'), disabled: locked, oninput: (e) => { t.steps = e.target.value.split('\n'); save(); } }))),
-    locked ? null : h('button', { class: 'ghost danger', onclick: () => { templates.splice(i, 1); save(); renderTemplates(); } }, 'Remove template'))));
+  const save = () => saveList('templates', templates.filter((t) => t.name.trim()).map((t) => ({ ...t, fields: (t.fields || []).filter((f) => f.label.trim()) })));
+  const placeholder = (t, key) => (e) => { t.placeholders = { ...t.placeholders, [key]: e.target.value }; save(); };
+  $('templates').replaceChildren(...templates.map((t, i) => {
+    t.fields ||= [];
+    const fieldList = h('ul', { class: 'editable-list' });
+    const renderTplFields = () => {
+      fieldList.replaceChildren(...t.fields.map((f, j) => fieldRow(f, { locked, save, withDefault: true, remove: () => { t.fields.splice(j, 1); save(); renderTplFields(); } })));
+      if (!t.fields.length) fieldList.append(h('li', { class: 'muted small', text: 'No template fields.' }));
+    };
+    renderTplFields();
+    return h('li', {},
+      h('div', { class: 'tpl-grid' },
+        h('label', {}, h('span', { text: 'Name' }), h('input', { type: 'text', value: t.name, disabled: locked, oninput: (e) => { t.name = e.target.value; save(); } })),
+        h('label', {}, h('span', { text: 'Tags (comma separated)' }), h('input', { type: 'text', value: (t.tags || []).join(', '), disabled: locked, oninput: (e) => { t.tags = e.target.value.split(',').map((x) => x.trim()).filter(Boolean); save(); } })),
+        h('label', { class: 'wide' }, h('span', { text: 'Apply automatically to /snap captures from these tables (comma separated, optional)' }),
+          h('input', { type: 'text', placeholder: 'incident, problem', value: (t.tables || []).join(', '), disabled: locked, oninput: (e) => { t.tables = e.target.value.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean); save(); } })),
+        h('label', {}, h('span', { text: 'Description' }), h('input', { type: 'text', value: t.description, disabled: locked, oninput: (e) => { t.description = e.target.value; save(); } })),
+        h('label', {}, h('span', { text: 'Description placeholder' }), h('input', { type: 'text', value: t.placeholders?.description || '', disabled: locked, oninput: placeholder(t, 'description') })),
+        h('label', {}, h('span', { text: 'Notes' }), h('textarea', { rows: 4, value: t.notes, disabled: locked, oninput: (e) => { t.notes = e.target.value; save(); } })),
+        h('label', {}, h('span', { text: 'Notes placeholder' }), h('textarea', { rows: 4, value: t.placeholders?.notes || '', disabled: locked, oninput: placeholder(t, 'notes') })),
+        h('label', { class: 'wide' }, h('span', { text: 'Steps (one per line)' }), h('textarea', { rows: 3, value: (t.steps || []).join('\n'), disabled: locked, oninput: (e) => { t.steps = e.target.value.split('\n'); save(); } })),
+        h('div', { class: 'wide' }, h('span', { class: 'small muted', text: 'Template fields — shown in the editor only while this template is active' }), fieldList,
+          locked ? null : h('button', { class: 'small', onclick: () => { t.fields.push({ label: '', type: 'text', required: false }); renderTplFields(); fieldList.querySelector('li:last-child input')?.focus(); } }, '＋ Add template field'))),
+      locked ? null : h('button', { class: 'ghost danger', onclick: () => { templates.splice(i, 1); save(); renderTemplates(); } }, 'Remove template'));
+  }));
   if (!templates.length) $('templates').append(h('li', { class: 'muted small', text: 'No templates.' }));
 }
 $('btn-add-template').addEventListener('click', () => {
-  templates.push({ id: crypto.randomUUID().slice(0, 8), name: 'New template', description: '', notes: '', steps: [], tags: [], tables: [] });
+  templates.push({ id: crypto.randomUUID().slice(0, 8), name: 'New template', description: '', notes: '', steps: [], tags: [], tables: [], placeholders: { description: '', notes: '' }, fields: [] });
   renderTemplates();
 });
 

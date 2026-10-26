@@ -1,7 +1,7 @@
 // Context fields beyond description/notes (§7.4): steps to reproduce, tags, custom fields from
-// settings, and templates.
+// settings, and templates (which can bring their own fields and placeholder text).
 
-import { applyTemplate } from '../shared/settings.js';
+import { applyTemplate, activeTemplate, contextFields } from '../shared/settings.js';
 import { el } from './ui.js';
 
 export class ContextForm extends EventTarget {
@@ -9,14 +9,18 @@ export class ContextForm extends EventTarget {
    * @param {object} opts
    * @param {object} opts.settings
    * @param {string[]} opts.knownTags tag suggestions (from the library)
+   * @param {Document|ShadowRoot} [opts.root] where the form's elements live (/snap-lite uses a shadow root)
    */
-  constructor({ settings, knownTags = [] }) {
+  constructor({ settings, knownTags = [], root = document }) {
     super();
     this.settings = settings;
     this.steps = [];
     this.tags = [];
     this.custom = {};
-    this.$ = (id) => document.getElementById(id);
+    this.template = null; // id of the active template
+    this.$ = (id) => root.getElementById(id);
+    // The HTML placeholders are the fallback when the active template doesn't set its own.
+    this.defaultPlaceholders = { description: this.$('ctx-description').placeholder, notes: this.$('ctx-notes').placeholder };
     this.$('tag-suggestions').replaceChildren(...[...new Set(knownTags)].sort().map((t) => el('option', { value: t })));
     this.bindTags();
     this.$('btn-add-step').addEventListener('click', () => { this.steps.push(''); this.renderSteps(this.steps.length - 1); this.changed(); });
@@ -35,9 +39,17 @@ export class ContextForm extends EventTarget {
     this.steps = [...(context.steps || [])];
     this.tags = [...(context.tags || [])];
     this.custom = { ...(context.custom || {}) };
+    this.template = context.template || null;
     this.renderSteps();
     this.renderTags();
+    this.renderPlaceholders();
     this.renderCustomFields();
+    this.renderTemplateMenu();
+  }
+
+  /** Global custom fields plus the active template's own. */
+  fields() {
+    return contextFields(this.settings, { template: this.template });
   }
 
   /** Replace the steps list (e.g. from a generated guide). */
@@ -55,16 +67,17 @@ export class ContextForm extends EventTarget {
       steps: this.steps.map((s) => s.trim()).filter(Boolean),
       tags: [...this.tags],
       custom: Object.fromEntries(Object.entries(this.custom).filter(([, v]) => v !== '' && v !== undefined)),
+      template: this.template || undefined,
     };
   }
 
   /** Required custom fields that are empty → [{ id, label }]. */
   missingRequired() {
-    return this.settings.customFields.filter((f) => f.required && !String(this.custom[f.id] || '').trim());
+    return this.fields().filter((f) => f.required && !String(this.custom[f.id] || '').trim());
   }
 
   markMissing(fields) {
-    for (const f of this.settings.customFields) {
+    for (const f of this.fields()) {
       this.$(`cf-${f.id}`)?.classList.toggle('invalid', fields.some((m) => m.id === f.id));
     }
     if (fields[0]) this.$(`cf-${fields[0].id}`)?.focus();
@@ -134,11 +147,11 @@ export class ContextForm extends EventTarget {
 
   renderCustomFields() {
     const root = this.$('custom-fields');
-    root.replaceChildren(...this.settings.customFields.map((f) => {
+    root.replaceChildren(...this.fields().map((f) => {
       let input;
-      if (f.type === 'textarea') input = el('textarea', { id: `cf-${f.id}`, rows: 3 });
-      else if (f.type === 'select') input = el('select', { id: `cf-${f.id}` }, el('option', { value: '', text: '—' }), ...f.options.map((o) => el('option', { value: o, text: o })));
-      else input = el('input', { id: `cf-${f.id}`, type: 'text' });
+      if (f.type === 'textarea') input = el('textarea', { id: `cf-${f.id}`, rows: 3, placeholder: f.placeholder || undefined });
+      else if (f.type === 'select') input = el('select', { id: `cf-${f.id}` }, el('option', { value: '', text: f.placeholder || '—' }), ...f.options.map((o) => el('option', { value: o, text: o })));
+      else input = el('input', { id: `cf-${f.id}`, type: 'text', placeholder: f.placeholder || undefined });
       input.value = this.custom[f.id] || '';
       input.addEventListener('input', () => { this.custom[f.id] = input.value; input.classList.remove('invalid'); this.changed(); });
       return el('label', { class: 'field' }, el('span', {}, f.label, f.required ? el('em', { class: 'muted small', text: ' (required)' }) : null), input);
@@ -147,20 +160,37 @@ export class ContextForm extends EventTarget {
 
   // ---- templates ----
 
+  renderPlaceholders() {
+    const p = activeTemplate(this.settings.templates, { template: this.template })?.placeholders || {};
+    this.$('ctx-description').placeholder = p.description || this.defaultPlaceholders.description;
+    this.$('ctx-notes').placeholder = p.notes || this.defaultPlaceholders.notes;
+  }
+
   renderTemplateMenu() {
     const btn = this.$('btn-template');
     const menu = this.$('template-menu');
+    const active = activeTemplate(this.settings.templates, { template: this.template });
     btn.hidden = !this.settings.templates.length;
+    btn.textContent = active ? `${active.name} ▾` : 'Template ▾';
     menu.replaceChildren(...this.settings.templates.map((t) => el('button', {
-      role: 'menuitem',
+      role: 'menuitemradio', 'aria-checked': String(t === active),
       onclick: () => { menu.hidden = true; this.apply(t); },
-    }, t.name)));
+    }, t === active ? `✓ ${t.name}` : t.name)),
+    active ? el('button', { role: 'menuitem', onclick: () => { menu.hidden = true; this.clearTemplate(); } }, 'No template') : null);
+    if (this.menuBound) return;
+    this.menuBound = true;
     btn.addEventListener('click', (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; });
     document.addEventListener('click', () => { menu.hidden = true; });
   }
 
   apply(template) {
     this.set(applyTemplate(this.get(), template));
+    this.changed();
+  }
+
+  /** Drop the active template; values already typed into its fields are kept. */
+  clearTemplate() {
+    this.set({ ...this.get(), template: undefined });
     this.changed();
   }
 }

@@ -58,37 +58,57 @@ export const DEFAULTS = {
   'editor.defaultBlurMode': 'pixelate',
   'editor.rememberStyle': true, // start each capture with the last tool/color/width used
   'editor.palette': ['#e5484d', '#f76b15', '#ffd60a', '#30a46c', '#2563eb', '#111111', '#ffffff'],
-  // Extra context fields: [{ id, label, type: 'text' | 'textarea' | 'select', options?: string[], required?: boolean }]
+  // Extra context fields: [{ id, label, type: 'text' | 'textarea' | 'select', options?: string[], required?: boolean, placeholder?: string }]
   customFields: [],
-  // Context templates applied from the editor: [{ id, name, description, notes, steps: [], tags: [], tables: [] }]
+  // Context templates applied from the editor:
+  // [{ id, name, description, notes, steps: [], tags: [], tables: [], placeholders: { description, notes }, fields: [] }]
+  // `fields` are extra fields (same shape as customFields, plus `default`) shown only while the template is
+  // active; `placeholders` replace the hint text of the built-in fields.
   // `tables` auto-applies the template to new /snap captures from those ServiceNow tables.
   templates: [
     {
       id: 'bug',
       name: 'Bug report',
       description: '',
-      notes: 'Expected:\n\nActual:\n',
+      notes: '',
       steps: ['Open the record', ''],
       tags: ['bug'],
       tables: [],
+      placeholders: { description: 'One line: what is broken', notes: 'Workarounds, frequency, anything else' },
+      fields: [
+        { id: 'expected', label: 'Expected', type: 'textarea', placeholder: 'What should happen' },
+        { id: 'actual', label: 'Actual', type: 'textarea', placeholder: 'What happens instead' },
+      ],
     },
     {
       id: 'uat',
       name: 'UAT finding',
       description: '',
-      notes: 'Test case:\nExpected result:\nActual result:\nSeverity:',
+      notes: '',
       steps: [],
       tags: ['uat'],
       tables: [],
+      placeholders: { description: 'One line: the finding' },
+      fields: [
+        { id: 'test_case', label: 'Test case', type: 'text', placeholder: 'e.g. TC-042' },
+        { id: 'expected_result', label: 'Expected result', type: 'textarea' },
+        { id: 'actual_result', label: 'Actual result', type: 'textarea' },
+        { id: 'severity', label: 'Severity', type: 'select', options: ['Low', 'Medium', 'High', 'Critical'] },
+      ],
     },
     {
       id: 'walkthrough',
       name: 'Walkthrough',
       description: 'Walkthrough: ',
-      notes: 'Audience:\nCovers:',
+      notes: '',
       steps: [],
       tags: ['walkthrough'],
       tables: [],
+      placeholders: { description: 'Walkthrough: what this shows', notes: 'Anything the viewer should know first' },
+      fields: [
+        { id: 'audience', label: 'Audience', type: 'text', placeholder: 'e.g. Service desk agents' },
+        { id: 'covers', label: 'Covers', type: 'textarea', placeholder: 'Topics, one per line' },
+      ],
     },
   ],
 };
@@ -191,7 +211,22 @@ export function normalizeTemplates(templates) {
       id: String(t.id || `t${i}`), name: String(t.name), description: t.description || '', notes: t.notes || '',
       steps: Array.isArray(t.steps) ? t.steps.map(String) : [], tags: Array.isArray(t.tags) ? t.tags.map(String) : [],
       tables: strList(t.tables).map((x) => x.toLowerCase()),
+      placeholders: { description: String(t.placeholders?.description || ''), notes: String(t.placeholders?.notes || '') },
+      fields: normalizeCustomFields(t.fields),
     }));
+}
+
+/** The template a context was last given, if it still exists. */
+export function activeTemplate(templates, context) {
+  const id = context?.template;
+  return id ? (templates || []).find((t) => t.id === id) || null : null;
+}
+
+/** Fields shown for a context: the global custom fields, then the active template's own (global ids win). */
+export function contextFields(settings, context) {
+  const global = settings.customFields || [];
+  const ids = new Set(global.map((f) => f.id));
+  return [...global, ...(activeTemplate(settings.templates, context)?.fields || []).filter((f) => !ids.has(f.id))];
 }
 
 /** The template to auto-apply for a ServiceNow table, if any (first match wins). */
@@ -262,19 +297,23 @@ export function normalizeCustomFields(fields) {
     seen.add(id);
     const type = ['text', 'textarea', 'select'].includes(f.type) ? f.type : 'text';
     out.push({
-      id, label: String(f.label), type, required: !!f.required,
+      id, label: String(f.label), type, required: !!f.required, placeholder: String(f.placeholder || ''),
       options: type === 'select' ? (Array.isArray(f.options) ? f.options : String(f.options || '').split(',')).map((o) => String(o).trim()).filter(Boolean) : undefined,
+      default: f.default === undefined ? undefined : String(f.default),
     });
   }
   return out;
 }
 
 /**
- * Merge a template into context. Empty fields are filled; notes are appended; steps fill an empty
- * list; tags are unioned.
+ * Merge a template into context and make it the active one. Empty fields are filled; notes are
+ * appended; steps fill an empty list; tags are unioned; the template's own fields get their defaults
+ * where empty.
  */
 export function applyTemplate(context, template) {
-  const c = { ...context, steps: [...(context.steps || [])], tags: [...(context.tags || [])] };
+  const c = { ...context, steps: [...(context.steps || [])], tags: [...(context.tags || [])], custom: { ...(context.custom || {}) } };
+  c.template = template.id;
+  for (const f of template.fields || []) if (f.default && !String(c.custom[f.id] || '').trim()) c.custom[f.id] = f.default;
   if (template.description && !c.description) c.description = template.description;
   if (template.notes) c.notes = c.notes && c.notes.trim() ? `${c.notes.replace(/\s+$/, '')}\n\n${template.notes}` : template.notes;
   if (template.steps?.length && !c.steps.some((s) => s.trim())) c.steps = [...template.steps];

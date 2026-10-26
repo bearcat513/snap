@@ -50,9 +50,33 @@ jobs:
           CHROME: ${{ matrix.browser == 'chrome' && steps.chrome.outputs.chrome-path || steps.edge.outputs.edge-path }}
           CHROME_ARGS: --no-sandbox
 
+  lite:
+    # Snap Lite (no extension): build the bundle, run it through the /snap-lite loader against the
+    # mock instance, and keep the built files as an artifact for pasting into a UI Script.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - id: chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+      - name: Run Snap Lite e2e
+        run: npm run test:e2e:lite
+        env:
+          CHROME: ${{ steps.chrome.outputs.chrome-path }}
+          CHROME_ARGS: --no-sandbox
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snap-lite
+          path: dist/
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [unit, e2e]
+    needs: [unit, e2e, lite]
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -35,6 +35,8 @@ input[type="color"] { width: 100%; height: 32px; padding: 2px; border: 1px solid
 .editable-list .tpl-grid .wide { grid-column: 1 / -1; }
 .editable-list label > span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
 .editable-list .opts { margin-top: 8px; }
+.editable-list .editable-list { margin: 6px 0; }
+.editable-list .editable-list > li { background: var(--surface); }
 @media (max-width: 600px) { .editable-list .grid, .editable-list .tpl-grid { grid-template-columns: 1fr; } }
 
 /* ---- tabs ---- */

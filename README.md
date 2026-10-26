@@ -39,7 +39,7 @@ The **editor** opens in a tab after each capture:
 - **Copy:** the *Copy* button or `Ctrl+C` puts the annotated, cropped image on the clipboard.
 - **Redaction** is applied to the pixels of the exported PNG/PDF, not drawn on top, so the hidden content can't be recovered.
 - **Suggested redactions:** at capture time the page's text and form fields are scanned on the device for email addresses, phone numbers, IP addresses, card numbers, tokens/keys, password fields and your own patterns. The editor offers to *Redact all*, *Review one by one* (click an outlined area to redact it) or *Dismiss*. Nothing is hidden until you choose, and saving off the device with unreviewed suggestions asks first. Only rectangles are kept, never the matched text.
-- **Context:** record URL, a one-line description (required for ServiceNow), steps to reproduce, notes, tags, and any extra fields defined in Settings (required ones must be filled before saving to S3 or ServiceNow). **Template ▾** pre-fills these from a template. Environment metadata (instance, table, record, browser, viewport, time, user) is filled in automatically.
+- **Context:** record URL, a one-line description (required for ServiceNow), steps to reproduce, notes, tags, and any extra fields defined in Settings (required ones must be filled before saving to S3 or ServiceNow). **Template ▾** pre-fills these from a template; a template can also swap in its own placeholder text and add its own fields (e.g. Expected / Actual for a bug, Severity for a UAT finding), which stay with the capture and appear in exports. Environment metadata (instance, table, record, browser, viewport, time, user) is filled in automatically.
 - **Video:** `Space` plays/pauses, `,` / `.` step one frame, `←` / `→` seek 1 s (`Shift`: 5 s), and `Home` / `End` jump to the ends of the trim. Trim with the timeline handles or *Set start* / *Set end* (`[` / `]`). Add keyframes for the PDF report (*＋ Keyframe*, `K`, or *Auto keyframes*). For tab recordings, *✦ Generate guide* turns the clicks you made into numbered steps ("Click “Resolve”") and a keyframe just before each click, marked in the PDF. Narrated recordings with captions on get a transcript (click a line to seek) and a `.vtt` file in the sidecar. *Download GIF* makes a looping GIF of up to the first 20 s of the exported range. *Redact region* lets you drag boxes over the video that pixelate or blur from the current time; adjust each region's time range with *Start/End = now*. The player previews the redactions live. On export the video is re-encoded with the trim and redactions. That runs in real time and needs the tab visible; the result is cached until you change the edits.
 - **Destinations:** tick any of *ServiceNow record*, *Jira*, *GitHub*, *Webhook* (once configured), *Amazon S3* and *Download*, and pick the formats for each (PNG, PDF report, video, GIF, `.md` + `.json` sidecar). They save in order: S3, webhook, Jira, GitHub, ServiceNow, Download. That way the S3 link can go into the issue and the PDF attached to the record, and the issue link into the record's PDF and work note. Failed saves can be retried from the library; a retry attaches to the issue created the first time.
 
@@ -69,6 +69,20 @@ Without the extension installed, the command falls back to a page-only `getDispl
 **Shortcut prompt.** Chrome won't let an extension screenshot a tab without a user gesture unless it has access to every site (`<all_urls>`). A ServiceNow host permission is not enough; this was tested and answers design doc §20 Q1. So by default `/snap` shows a small in-page prompt: *"Press Alt+Shift+S (or click the Snap icon)…"*. To skip it, turn on **Settings → ServiceNow → One-step /snap screenshots**, which asks Chrome for all-site access. Tab recording always needs the shortcut or a click (a `tabCapture` rule).
 
 **Custom domains:** add them under **Settings → ServiceNow instances**. Chrome asks for access to each host, and the content script is then registered for it automatically.
+
+## Snap Lite: `/snap-lite` without the extension
+
+A cut-down version that runs entirely in the ServiceNow page from an SN Utils command, for people who can't install the extension. It covers the screenshot workflow: capture → annotate and redact (with suggested redactions) → context form with templates and their own fields → attach a PDF report and/or the PNG to the record, with an optional work note. It reuses the extension's annotation engine, PDF writer, pickers, sensitive-text scan and context form, bundled by esbuild into one script (`lite/`, about 70 KB).
+
+**Setup (once per instance, admin):**
+
+1. `npm ci && npm run build:lite`. CI also keeps `dist/` as the `snap-lite` artifact.
+2. Create a **UI Script** named `snap_lite` (global application, UI type *Desktop*, **Global** unchecked so it doesn't load on every page) and paste in `dist/snap-lite.js`.
+3. Optional: a system property `snap_lite.config` (string, JSON) with any of `templates`, `customFields`, `workNote`, `redactionPatterns`, `pdfPageSize` (`letter` | `a4`) and `fileNamePattern`. Templates and custom fields use the same shapes as the extension's Settings and policy (`managed_schema.json`). Without it, the built-in templates are offered. Users need read access to `sys_properties` for the config and the attachment limits; otherwise defaults apply.
+
+**Each user:** create an SN Utils script command `/snap-lite` from [`snutils/snap-lite-command.js`](snutils/snap-lite-command.js), then run `/snap-lite`, `/snap-lite region` or `/snap-lite element` on a saved record. Chrome asks which tab to share each time: pick this tab. To try it without a UI Script, use `dist/snap-lite-command.js` as the command instead. It embeds the whole app (about 73 KB) and runs it with the page's `Function`, so it needs an instance whose Content Security Policy allows that.
+
+**What's different from the extension.** Every capture shows Chrome's share picker; only an extension can skip it. There's no full-page capture, recording, library, S3/Jira/GitHub/webhook, shortcuts, popup or side panel, and the editor closes, with nothing saved, if you leave the page. Suggested redactions and element capture need you to share *this* tab, since they map page positions onto the frame. Retry after a failed attach is a click on **Attach to record** again while the editor is open.
 
 ### Bridge protocol
 
@@ -114,7 +128,7 @@ The bucket's CORS rules must allow `PUT` from `chrome-extension://<extension-id>
 
 ## Managed policy
 
-Admins can push `s3`, `snHosts`, `allowedDestinations` (now also `webhook`, `jira`, `github`), `forceRedactionReminder`, `recordingMaxMinutes`, `customFields`, `templates` (with `tables` to auto-apply), `redactionPatterns`, `snWorkNote`, `webhookUrl`, `jiraBaseUrl`, `jiraProjectKey`, `githubApiUrl` and `githubRepo` through Chrome enterprise policy ([`managed_schema.json`](managed_schema.json)). Managed values override user settings and show as locked in Settings. Tokens can't be pushed by policy: each user enters their own.
+Admins can push `s3`, `snHosts`, `allowedDestinations` (now also `webhook`, `jira`, `github`), `forceRedactionReminder`, `recordingMaxMinutes`, `customFields`, `templates` (with `tables` to auto-apply, plus per-template `fields` and `placeholders`), `redactionPatterns`, `snWorkNote`, `webhookUrl`, `jiraBaseUrl`, `jiraProjectKey`, `githubApiUrl` and `githubRepo` through Chrome enterprise policy ([`managed_schema.json`](managed_schema.json)). Managed values override user settings and show as locked in Settings. Tokens can't be pushed by policy: each user enters their own.
 
 ## Browser support
 
@@ -139,6 +153,9 @@ npm run test:e2e  # headless Chrome + mock ServiceNow over TLS: /snap → editor
                   # search/tag filter/re-export; delayed capture; /snap session with instance limits
                   # and work note; Jira, GitHub and webhook (mocked) with a failed save retried from the
                   # library; compare; viewports; console/network capture; side panel; options; popup
+npm run test:e2e:lite  # Snap Lite with no extension: /snap-lite loader → UI Script → tab frame → suggested
+                       # redaction → auto-applied template with its own required field → attach PDF + PNG
+                       # + work note; region crop; cancel
 node scripts/check-version.mjs v0.1.0   # release guard: tag = manifest = package.json
 ```
 
@@ -167,16 +184,18 @@ _locales/         messages for chrome.i18n
 src/bridge/       bridge.html iframe (delivers Blobs to the SN page)
 src/shared/       db.js (IndexedDB "snap"), settings.js, protocol.js, recording.js, captures.js, sensitive.js,
                   guide.js, captions.js, saves.js, diagnostics.js, …
-snutils/          snap-command.js: the /snap script command
+snutils/          snap-command.js: the /snap script command; snap-lite-command.js: the /snap-lite loader
+lite/             Snap Lite: main.js (entry), capture.js, editor.js, report.js, servicenow.js, lite.css
+scripts/          build-lite.mjs (esbuild → dist/), make-icons.mjs, check-version.mjs
 ```
 
 ## Differences from the design doc
 
-- **No build tooling.** The doc assumed TypeScript, Vite, Svelte, Konva, `idb`, `pdf-lib` and `fix-webm-duration`. This build uses plain JS modules instead: a small canvas annotation engine, an in-house PDF writer and an EBML duration patcher. That keeps it loadable unpacked with nothing to bundle.
+- **No build tooling.** The doc assumed TypeScript, Vite, Svelte, Konva, `idb`, `pdf-lib` and `fix-webm-duration`. This build uses plain JS modules instead: a small canvas annotation engine, an in-house PDF writer and an EBML duration patcher. That keeps it loadable unpacked with nothing to bundle. Only Snap Lite is bundled (esbuild, a dev dependency), because it has to ship as one script.
 - **`all_frames: true`** for the content script, so `/snap` also works when SN Utils runs inside Classic UI's `gsft_main` iframe.
 - **Fixed/sticky elements are hidden** (`visibility: hidden`) rather than set to `position: static` while stitching full pages. This avoids reflowing the page mid-capture.
 - **Optional `<all_urls>`** for one-step `/snap` screenshots (see above).
 - **Video edits are re-encoded in real time** (play through a canvas + MediaRecorder) rather than using WebCodecs or ffmpeg.wasm. A 40 s range takes about 40 s to render, but there are no codec libraries to bundle. Trim points are frame-accurate, not keyframe-snapped.
-- **Templates** are context templates (description, notes, steps, tags), editable in Settings or pushed by policy.
+- **Templates** are context templates (description, notes, steps, tags, placeholder text and template-only fields), editable in Settings or pushed by policy.
 - **Store listing / data handling statement:** see [`STORE_LISTING.md`](STORE_LISTING.md).
 - **Not built:** Cognito S3 mode (it would need the AWS SDK); it was removed from Settings and the policy schema.

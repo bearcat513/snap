@@ -155,8 +155,8 @@ try {
     await evalIn(ed, `document.getElementById('btn-template').click()`);
     await evalIn(ed, `document.querySelector('#template-menu button').click()`);
     await sleep(200);
-    const afterTpl = await evalIn(ed, `({ notes: document.getElementById('ctx-notes').value, steps: [...document.querySelectorAll('#steps input')].map(i => i.value), tags: [...document.querySelectorAll('#tags .chip')].map(c => c.firstChild.textContent) })`);
-    check('template pre-fills notes, steps and tags', afterTpl.notes.startsWith('Expected:') && afterTpl.steps[0] === 'Open the record' && afterTpl.tags.includes('bug'), JSON.stringify(afterTpl));
+    const afterTpl = await evalIn(ed, `({ steps: [...document.querySelectorAll('#steps input')].map(i => i.value), tags: [...document.querySelectorAll('#tags .chip')].map(c => c.firstChild.textContent), expected: document.getElementById('cf-expected')?.placeholder, descPlaceholder: document.getElementById('ctx-description').placeholder, button: document.getElementById('btn-template').textContent })`);
+    check('template pre-fills steps and tags, adds its fields and placeholders', afterTpl.steps[0] === 'Open the record' && afterTpl.tags.includes('bug') && afterTpl.expected === 'What should happen' && afterTpl.descPlaceholder === 'One line: what is broken' && afterTpl.button.startsWith('Bug report'), JSON.stringify(afterTpl));
     await evalIn(ed, `(() => { const i = document.querySelectorAll('#steps input')[1]; i.value = 'Set State to Resolved'; i.dispatchEvent(new Event('input')); })()`);
     await evalIn(ed, `document.getElementById('tag-input').focus()`);
     await b.send('Input.insertText', { text: 'forms' }, ed);
