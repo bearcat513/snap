@@ -9,16 +9,15 @@ export class ContextForm extends EventTarget {
    * @param {object} opts
    * @param {object} opts.settings
    * @param {string[]} opts.knownTags tag suggestions (from the library)
-   * @param {Document|ShadowRoot} [opts.root] where the form's elements live (/snap-lite uses a shadow root)
    */
-  constructor({ settings, knownTags = [], root = document }) {
+  constructor({ settings, knownTags = [] }) {
     super();
     this.settings = settings;
     this.steps = [];
     this.tags = [];
     this.custom = {};
     this.template = null; // id of the active template
-    this.$ = (id) => root.getElementById(id);
+    this.$ = (id) => document.getElementById(id);
     // The HTML placeholders are the fallback when the active template doesn't set its own.
     this.defaultPlaceholders = { description: this.$('ctx-description').placeholder, notes: this.$('ctx-notes').placeholder };
     this.$('tag-suggestions').replaceChildren(...[...new Set(knownTags)].sort().map((t) => el('option', { value: t })));

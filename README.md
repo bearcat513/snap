@@ -70,20 +70,6 @@ Without the extension installed, the command falls back to a page-only `getDispl
 
 **Custom domains:** add them under **Settings → ServiceNow instances**. Chrome asks for access to each host, and the content script is then registered for it automatically.
 
-## Snap Lite: `/snap-lite` without the extension
-
-A cut-down version that runs entirely in the ServiceNow page from an SN Utils command, for people who can't install the extension. It covers the screenshot workflow: capture → annotate and redact (with suggested redactions) → context form with templates and their own fields → attach a PDF report and/or the PNG to the record, with an optional work note. It reuses the extension's annotation engine, PDF writer, pickers, sensitive-text scan and context form, bundled by esbuild into one script (`lite/`, about 70 KB).
-
-**Setup (once per instance, admin):**
-
-1. `npm ci && npm run build:lite`. CI also keeps `dist/` as the `snap-lite` artifact.
-2. Create a **UI Script** named `snap_lite` (global application, UI type *Desktop*, **Global** unchecked so it doesn't load on every page) and paste in `dist/snap-lite.js`.
-3. Optional: a system property `snap_lite.config` (string, JSON) with any of `templates`, `customFields`, `workNote`, `redactionPatterns`, `pdfPageSize` (`letter` | `a4`) and `fileNamePattern`. Templates and custom fields use the same shapes as the extension's Settings and policy (`managed_schema.json`). Without it, the built-in templates are offered. Users need read access to `sys_properties` for the config and the attachment limits; otherwise defaults apply.
-
-**Each user:** create an SN Utils script command `/snap-lite` from [`snutils/snap-lite-command.js`](snutils/snap-lite-command.js), then run `/snap-lite`, `/snap-lite region` or `/snap-lite element` on a saved record. Chrome asks which tab to share each time: pick this tab. To try it without a UI Script, use `dist/snap-lite-command.js` as the command instead. It embeds the whole app (about 73 KB) and runs it with the page's `Function`, so it needs an instance whose Content Security Policy allows that.
-
-**What's different from the extension.** Every capture shows Chrome's share picker; only an extension can skip it. There's no full-page capture, recording, library, S3/Jira/GitHub/webhook, shortcuts, popup or side panel, and the editor closes, with nothing saved, if you leave the page. Suggested redactions and element capture need you to share *this* tab, since they map page positions onto the frame. Retry after a failed attach is a click on **Attach to record** again while the editor is open.
-
 ### Bridge protocol
 
 Messages go over `window.postMessage(msg, location.origin)` with the envelope `{ ns: 'snap-companion', v: 1, type, requestId, payload }` (§11.3):
@@ -153,9 +139,6 @@ npm run test:e2e  # headless Chrome + mock ServiceNow over TLS: /snap → editor
                   # search/tag filter/re-export; delayed capture; /snap session with instance limits
                   # and work note; Jira, GitHub and webhook (mocked) with a failed save retried from the
                   # library; compare; viewports; console/network capture; side panel; options; popup
-npm run test:e2e:lite  # Snap Lite with no extension: /snap-lite loader → UI Script → tab frame → suggested
-                       # redaction → auto-applied template with its own required field → attach PDF + PNG
-                       # + work note; region crop; cancel
 node scripts/check-version.mjs v0.1.0   # release guard: tag = manifest = package.json
 ```
 
@@ -184,14 +167,12 @@ _locales/         messages for chrome.i18n
 src/bridge/       bridge.html iframe (delivers Blobs to the SN page)
 src/shared/       db.js (IndexedDB "snap"), settings.js, protocol.js, recording.js, captures.js, sensitive.js,
                   guide.js, captions.js, saves.js, diagnostics.js, …
-snutils/          snap-command.js: the /snap script command; snap-lite-command.js: the /snap-lite loader
-lite/             Snap Lite: main.js (entry), capture.js, editor.js, report.js, servicenow.js, lite.css
-scripts/          build-lite.mjs (esbuild → dist/), make-icons.mjs, check-version.mjs
+snutils/          snap-command.js: the /snap script command
 ```
 
 ## Differences from the design doc
 
-- **No build tooling.** The doc assumed TypeScript, Vite, Svelte, Konva, `idb`, `pdf-lib` and `fix-webm-duration`. This build uses plain JS modules instead: a small canvas annotation engine, an in-house PDF writer and an EBML duration patcher. That keeps it loadable unpacked with nothing to bundle. Only Snap Lite is bundled (esbuild, a dev dependency), because it has to ship as one script.
+- **No build tooling.** The doc assumed TypeScript, Vite, Svelte, Konva, `idb`, `pdf-lib` and `fix-webm-duration`. This build uses plain JS modules instead: a small canvas annotation engine, an in-house PDF writer and an EBML duration patcher. That keeps it loadable unpacked with nothing to bundle.
 - **`all_frames: true`** for the content script, so `/snap` also works when SN Utils runs inside Classic UI's `gsft_main` iframe.
 - **Fixed/sticky elements are hidden** (`visibility: hidden`) rather than set to `position: static` while stitching full pages. This avoids reflowing the page mid-capture.
 - **Optional `<all_urls>`** for one-step `/snap` screenshots (see above).

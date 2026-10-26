@@ -2,10 +2,10 @@
 import https from 'node:https';
 import { readFileSync } from 'node:fs';
 
-export function startServer({ port, snapCommandPath, certDir, liteBundlePath }) {
+export function startServer({ port, snapCommandPath, certDir }) {
   const uploads = [];
   // Extra mocks: attachment limits (sys_properties), work notes, a webhook, Jira and GitHub.
-  const state = { liteConfig: null, limits: null, notes: [], hooks: [], failHook: 0, jira: { issues: [], attachments: [] }, gh: { issues: [] } };
+  const state = { limits: null, notes: [], hooks: [], failHook: 0, jira: { issues: [], attachments: [] }, gh: { issues: [] } };
   const sysId = '9d385017c611228701d22104cc95c371';
   const cmd = readFileSync(snapCommandPath, 'utf8').replace(/\$table/g, 'incident').replace(/\$sysid/g, sysId);
   const page = `<!doctype html><html><head><title>INC0012345 | Incident</title></head>
@@ -26,13 +26,9 @@ export function startServer({ port, snapCommandPath, certDir, liteBundlePath }) 
   const readBody = (req) => new Promise((r) => { const c = []; req.on('data', (d) => c.push(d)); req.on('end', () => r(Buffer.concat(c))); });
   const server = https.createServer({ key: readFileSync(`${certDir}/key.pem`), cert: readFileSync(`${certDir}/cert.pem`) }, async (req, res) => {
     if (req.url.startsWith('/incident.do')) { res.writeHead(200, { 'content-type': 'text/html' }); res.end(page); return; }
-    // Snap Lite's UI Script (tests/e2e/lite.mjs).
-    if (req.url === '/snap_lite.jsdbx' && liteBundlePath) { res.writeHead(200, { 'content-type': 'application/javascript' }); res.end(readFileSync(liteBundlePath)); return; }
     if (req.url.startsWith('/api/now/table/sys_properties')) {
       const l = state.limits;
-      const result = l ? [{ name: 'com.glide.attachment.max_size', value: l.max }, { name: 'glide.attachment.extensions', value: l.ext }] : [];
-      if (state.liteConfig) result.push({ name: 'snap_lite.config', value: JSON.stringify(state.liteConfig) });
-      json(res, 200, { result });
+      json(res, 200, { result: l ? [{ name: 'com.glide.attachment.max_size', value: l.max }, { name: 'glide.attachment.extensions', value: l.ext }] : [] });
       return;
     }
     if (req.url.startsWith('/api/now/table/incident/') && req.method === 'PATCH') {

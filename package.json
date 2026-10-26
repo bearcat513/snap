@@ -8,11 +8,6 @@
     "test": "node --test tests/",
     "icons": "node scripts/make-icons.mjs",
     "zip": "zip -r snap-companion.zip manifest.json managed_schema.json _locales icons src snutils -x '*.DS_Store'",
-    "test:e2e": "node tests/e2e/e2e.mjs",
-    "build:lite": "node scripts/build-lite.mjs",
-    "test:e2e:lite": "node tests/e2e/lite.mjs"
-  },
-  "devDependencies": {
-    "esbuild": "^0.25.10"
+    "test:e2e": "node tests/e2e/e2e.mjs"
   }
 }

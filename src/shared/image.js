@@ -82,21 +82,3 @@ export async function stitchTiles(tiles, { rect, totalHeight, dpr, maxPx = 16384
 export function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
 }
-
-/**
- * Map scan rects (client CSS px) into image pixels: subtract the origin (ox, oy), keep what overlaps
- * the clip (CSS px, relative to that origin), and scale.
- */
-export function suggestionsToImage(scan, { scale, ox = 0, oy = 0, clip }) {
-  if (!scan?.rects?.length) return [];
-  const out = [];
-  for (const r of scan.rects) {
-    const x0 = Math.max(0, r.x - ox);
-    const y0 = Math.max(0, r.y - oy);
-    const x1 = Math.min(clip.w, r.x - ox + r.w);
-    const y1 = Math.min(clip.h, r.y - oy + r.h);
-    if (x1 - x0 < 2 || y1 - y0 < 2) continue;
-    out.push({ x: Math.round(x0 * scale), y: Math.round(y0 * scale), w: Math.round((x1 - x0) * scale), h: Math.round((y1 - y0) * scale), kind: r.kind });
-  }
-  return out;
-}
