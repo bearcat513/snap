@@ -1,7 +1,9 @@
 // Capture library (§4): search, kind/tag/unsaved filters, re-export without opening the editor,
 // and recovery of interrupted recordings (§16). Everything stays in this browser's IndexedDB.
 
-import { listCaptures, getBlob, blobSize, deleteCapture, clearLibrary, countChunks, deleteChunks, captureBlobIds, updateCapture } from '../shared/db.js';
+import { listCaptures, getBlob, putBlob, blobSize, deleteCapture, clearLibrary, countChunks, deleteChunks, captureBlobIds, updateCapture } from '../shared/db.js';
+import { buildZip, uniqueName } from '../shared/zip.js';
+import { formatDate } from '../shared/naming.js';
 import { findJobs, updateJob } from '../shared/jobs.js';
 import { finalizeRecording } from '../shared/captures.js';
 import { getSettings } from '../shared/settings.js';
@@ -79,6 +81,54 @@ async function quickExport(capture, format, settings) {
   toast(failed ? `Export failed: ${failed.error}` : `Downloaded ${results.map((r) => r.name).join(', ')}`);
 }
 
+/**
+ * Every capture in one ZIP: its media (annotated PNG / rendered video) plus the .md/.json sidecar.
+ * Sessions add only their report; their members are in the archive on their own.
+ */
+async function downloadAll(captures, settings) {
+  const adapter = getAdapter('download');
+  const av = await adapter.isAvailable({ settings });
+  if (!av.available) { toast(av.reason); return; }
+  const entries = [];
+  const taken = new Set();
+  const included = [];
+  const problems = [];
+  for (const [i, capture] of captures.entries()) {
+    const progress = (msg) => toast(`${i + 1} of ${captures.length}: ${msg || 'Preparing…'}`, 60_000);
+    progress();
+    const factory = new ExportFactory({ capture, settings, onProgress: progress });
+    const formats = capture.kind === 'screenshot' ? ['png', 'sidecar'] : capture.kind === 'recording' ? ['video', 'sidecar'] : ['sidecar'];
+    try {
+      const files = [];
+      for (const f of formats) files.push(...(await factory.get(f)));
+      for (const file of files) {
+        const blob = await getBlob(file.blobId);
+        if (!blob) throw new Error(`${file.name} is missing`);
+        entries.push({ name: uniqueName(file.name, taken), data: blob, date: new Date(capture.createdAt) });
+      }
+      included.push(capture.id);
+    } catch (err) {
+      problems.push(`${capture.title}: ${err.message}`);
+      logError('library:download-all', err.message, { capture: capture.id });
+    }
+  }
+  if (!entries.length) { toast(`Nothing to download. ${problems[0] || ''}`, 8000); return; }
+  toast('Building ZIP…', 60_000);
+  let result;
+  try {
+    const zip = await buildZip(entries);
+    const file = { name: `snap-library_${formatDate(new Date(), 'yyyyMMdd-HHmmss')}.zip`, mimeType: zip.type, size: zip.size, blobId: await putBlob(zip, { ephemeral: true }) };
+    result = { ...(await adapter.save(file, { settings })), at: new Date().toISOString() };
+  } catch (err) {
+    result = { adapter: 'download', ok: false, name: 'library ZIP', error: err.message };
+  }
+  if (!result.ok) { toast(`Download failed: ${result.error}`, 8000); return; }
+  const { adapter: a, ok, name, location, at, downloadId } = result;
+  for (const id of included) await updateCapture(id, (c) => { c.saves = [...(c.saves || []), { adapter: a, ok, name, location, at, downloadId }]; });
+  toast([`Downloaded ${included.length} capture${included.length === 1 ? '' : 's'} as ${name}.`,
+    problems.length ? `${problems.length} left out — ${problems[0]}` : ''].join(' '), 8000);
+}
+
 const snContextOf = (c) => (c.servicenow
   ? { instance: c.servicenow.instance, table: c.servicenow.table, sysId: c.servicenow.sysId, label: c.servicenow.label }
   : undefined);
@@ -152,6 +202,15 @@ export async function renderLibrary(root, { onOpen }) {
       disabled: captures.filter((c) => c.kind === 'screenshot').length < 2,
       onclick: () => { compare.on = !compare.on; compare.picked = []; rerender(); },
     }, compare.on ? 'Cancel compare' : 'Compare…'),
+    el('button', {
+      id: 'btn-download-all',
+      title: 'Download every capture (media + .md/.json) as one ZIP',
+      disabled: !captures.length,
+      onclick: async (e) => {
+        e.target.disabled = true;
+        try { await downloadAll(captures, settings); } finally { rerender(); }
+      },
+    }, 'Download all'),
     el('button', {
       class: 'danger',
       disabled: !captures.length,
@@ -273,7 +332,7 @@ export async function renderLibrary(root, { onOpen }) {
     const where = [...new Set(okSaves.map((s) => s.adapter))];
     const formats = c.kind === 'screenshot' ? [['png', 'PNG'], ['pdf', 'PDF report'], ['sidecar', '.md + .json']]
       : c.kind === 'session' ? [['pdf', 'PDF report'], ['sidecar', '.md + .json']]
-        : [['video', 'Video'], ['gif', 'GIF'], ['pdf', 'PDF report'], ['sidecar', '.md + .json']];
+        : [['video', 'Video'], ['gif', 'GIF'], ['frames', 'frames ZIP (1 PNG/s + video + .md)'], ['pdf', 'PDF report'], ['sidecar', '.md + .json']];
     const menu = el('div', { class: 'menu-list card-menu', role: 'menu', hidden: true },
       ...formats.map(([f, label]) => el('button', {
         role: 'menuitem',

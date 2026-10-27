@@ -6,6 +6,7 @@ export function formatForFile(name) {
   if (ext === 'png') return 'png';
   if (ext === 'pdf') return 'pdf';
   if (ext === 'gif') return 'gif';
+  if (ext === 'zip') return 'frames';
   if (ext === 'mp4' || ext === 'webm') return 'video';
   if (ext === 'md' || ext === 'json' || ext === 'vtt') return 'sidecar';
   if (ext === 'issue') return 'issue'; // the tracker issue itself

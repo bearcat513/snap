@@ -34,14 +34,14 @@ const dest = {}; // id → { on, formats: Set, available, reason, touched }
 
 const DEST_DISPLAY_ORDER = ['servicenow', 'jira', 'github', 'webhook', 's3', 'download'];
 const TRACKERS = new Set(['webhook', 'jira', 'github']); // shown only once configured
-const FORMAT_LABELS = { issue: 'Issue', png: 'PNG', pdf: 'PDF report', video: 'Video', gif: 'GIF', sidecar: '.md + .json' };
+const FORMAT_LABELS = { issue: 'Issue', png: 'PNG', pdf: 'PDF report', video: 'Video', gif: 'GIF', frames: 'Frames ZIP', sidecar: '.md + .json' };
 const FORMATS = {
   screenshot: {
     download: ['png', 'pdf', 'sidecar'], s3: ['png', 'pdf', 'sidecar'], servicenow: ['pdf', 'png'],
     webhook: ['png', 'pdf', 'sidecar'], jira: ['issue', 'png', 'pdf'], github: ['issue', 'png', 'pdf'],
   },
   recording: {
-    download: ['video', 'gif', 'pdf', 'sidecar'], s3: ['video', 'gif', 'pdf', 'sidecar'], servicenow: ['pdf', 'video', 'gif'],
+    download: ['video', 'gif', 'frames', 'pdf', 'sidecar'], s3: ['video', 'gif', 'frames', 'pdf', 'sidecar'], servicenow: ['pdf', 'video', 'gif'],
     webhook: ['video', 'pdf', 'sidecar'], jira: ['issue', 'pdf', 'gif', 'video'], github: ['issue', 'gif', 'pdf'],
   },
   session: {

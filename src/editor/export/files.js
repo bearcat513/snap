@@ -10,6 +10,7 @@ import { GifEncoder, buildPalette } from './gif.js';
 import { buildVtt, transcriptText } from '../../shared/captions.js';
 import { Annotator } from '../canvas.js';
 import { needsRender, renderKey, renderVideo, effectiveRange, FrameGrabber } from '../video-tools.js';
+import { buildZip } from '../../shared/zip.js';
 
 /** mm:ss.s — trim points need sub-second precision. */
 const fmtPrecise = (ms) => {
@@ -19,6 +20,7 @@ const fmtPrecise = (ms) => {
 
 const canvasToBlob = (canvas, type, quality) => new Promise((r) => canvas.toBlob(r, type, quality));
 const GIF_MAX_MS = 20_000;
+const FRAME_STEP_MS = 1000;
 
 async function jpegFrom(source) {
   // Flatten onto white (JPEG has no alpha) and return bytes + size.
@@ -195,6 +197,10 @@ export class ExportFactory {
         const bytes = await this.gifBytes();
         return [await this.store(`${this.base}.gif`, new Blob([bytes], { type: 'image/gif' }))];
       }
+      case 'frames': {
+        if (this.capture.kind !== 'recording') throw new Error('Frames can only be taken from a recording.');
+        return [await this.store(`${this.base}_frames.zip`, await this.framesZip(links))];
+      }
       case 'pdf': {
         const bytes = await this.pdfBytes(links);
         return [await this.store(`${this.base}.pdf`, new Blob([bytes], { type: 'application/pdf' }))];
@@ -284,6 +290,54 @@ export class ExportFactory {
     } finally {
       grabber.dispose();
     }
+  }
+
+  /**
+   * One PNG per second of the exported range (redactions applied), zipped with the exported video,
+   * a PDF of every frame and a Markdown file: the sidecar plus a table of frame timestamps.
+   */
+  async framesZip(links) {
+    const c = this.capture;
+    const original = await getBlob(c.originalBlobId);
+    if (!original) throw new Error('The video data for this capture is missing.');
+    const [start, end] = effectiveRange(c);
+    const times = [];
+    for (let t = start; t < end; t += FRAME_STEP_MS) times.push(t);
+    if (!times.length) times.push(start);
+    const date = new Date(c.createdAt);
+    const width = String(times.length).length < 4 ? 4 : String(times.length).length;
+    const entries = [];
+    const rows = [];
+    const images = [];
+    const grabber = new FrameGrabber(original, { unit: c.source?.dpr || 1 });
+    try {
+      for (const [i, t] of times.entries()) {
+        const frame = await grabber.grab(t, c.videoRedactions);
+        const secs = Math.round((t - start) / 1000);
+        const name = `frames/${this.base}_${String(i + 1).padStart(width, '0')}_${String(Math.floor(secs / 60)).padStart(2, '0')}m${String(secs % 60).padStart(2, '0')}s.png`;
+        entries.push({ name, data: await canvasToBlob(frame, 'image/png'), date });
+        rows.push(`| ${i + 1} | ${fmtPrecise(t - start)} | [${name.slice(7)}](${encodeURI(name)}) |`);
+        images.push({ type: 'image', caption: `Frame ${i + 1} at ${fmtPrecise(t - start)}`, ...(await jpegFrom(frame)) });
+        this.onProgress?.(`Taking frames ${i + 1} of ${times.length}`, (i + 1) / times.length);
+      }
+    } finally {
+      grabber.dispose();
+    }
+    const [video] = await this.get('video');
+    entries.unshift({ name: video.name, data: await getBlob(video.blobId), date });
+    const md = [this.markdown(links).trimEnd(), '', '## Frames', '',
+      `${times.length} frame${times.length === 1 ? '' : 's'}, one every ${FRAME_STEP_MS / 1000} s of the exported video ([${video.name}](${encodeURI(video.name)})), all in [${this.base}_frames.pdf](${encodeURI(`${this.base}_frames.pdf`)}).`, '',
+      '| # | Time | File |', '| --- | --- | --- |', ...rows, ''].join('\n');
+    this.onProgress?.('Building frames PDF…', 1);
+    const pdf = buildPdf({
+      pageSize: this.settings['pdf.pageSize'],
+      title: c.title,
+      createdAt: date,
+      blocks: [{ type: 'title', text: c.title || 'Recording' }, { type: 'meta', text: environmentLine(c) },
+        { type: 'field', label: 'Frames', text: `${times.length}, one every ${FRAME_STEP_MS / 1000} s of the exported video` }, ...images],
+    });
+    entries.splice(1, 0, { name: `${this.base}.md`, data: md, date }, { name: `${this.base}_frames.pdf`, data: pdf, date });
+    return buildZip(entries);
   }
 
   /** Keyframe images for the PDF: the chosen keyframes, or one frame at the start of the range. */

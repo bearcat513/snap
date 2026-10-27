@@ -8,6 +8,7 @@ const at = (m) => `2026-10-24T10:${String(m).padStart(2, '0')}:00.000Z`;
 test('file names map back to export formats', () => {
   assert.equal(formatForFile('incident_INC1_20261024-101500.pdf'), 'pdf');
   assert.equal(formatForFile('x.webm'), 'video');
+  assert.equal(formatForFile('x_frames.zip'), 'frames');
   assert.equal(formatForFile('x.json'), 'sidecar');
   assert.equal(formatForFile('x.vtt'), 'sidecar');
   assert.equal(formatForFile('x.gif'), 'gif');
