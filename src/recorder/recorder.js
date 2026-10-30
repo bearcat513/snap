@@ -3,7 +3,7 @@
 import { startRecording } from '../shared/recording.js';
 import { getSettings, recordingQuality } from '../shared/settings.js';
 import '../ui/theme.js';
-import '../ui/i18n.js';
+import { t } from '../ui/i18n.js';
 import { createJob, getJob, updateJob } from '../shared/jobs.js';
 import { formatDuration } from '../shared/util.js';
 import { installErrorLogging } from '../shared/diagnostics.js';
@@ -126,6 +126,9 @@ async function capResolution(track) {
 function tick() {
   const now = pausedAt || Date.now();
   $('elapsed').textContent = formatDuration(now - startedAt - pausedTotal);
+  const left = rec.remainingMs();
+  $('limit').hidden = left > 60_000;
+  if (left <= 60_000) $('limit-text').textContent = t('limit_stops_in', Math.max(0, Math.ceil(left / 1000)));
 }
 
 function setPaused(paused) {
@@ -158,12 +161,15 @@ function stop() {
 $('btn-pause').addEventListener('click', () => chrome.runtime.sendMessage({ type: 'record:pause' }));
 $('btn-resume').addEventListener('click', () => chrome.runtime.sendMessage({ type: 'record:resume' }));
 $('btn-stop').addEventListener('click', () => chrome.runtime.sendMessage({ type: 'record:stop' }));
+$('btn-extend').hidden = settings.locked.includes('recording.maxMinutes');
+$('btn-extend').addEventListener('click', () => chrome.runtime.sendMessage({ type: 'record:extend' }));
 
 chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
   if (!msg || msg.target !== 'recorder' || !job || msg.jobId !== job.id) return false;
   if (msg.type === 'record:pause') pause();
   if (msg.type === 'record:resume') resume();
   if (msg.type === 'record:stop') stop();
+  if (msg.type === 'record:extend') rec?.extend();
   sendResponse({ ok: true });
   return false;
 });

@@ -1,5 +1,5 @@
 // End-to-end tests (§18): headless Chrome + a mock ServiceNow instance served over TLS.
-//   npm run test:e2e            (CHROME=/path/to/chrome to override; arg: all|bridge|fullpage|region|record)
+//   npm run test:e2e            (CHROME=/path/to/chrome to override; arg: all|bridge|fullpage|region|record|library|extras|ux)
 // The test copy of the extension is granted <all_urls> so one-step /snap captures can run without a
 // real keyboard shortcut (CDP can't trigger extension commands). Not covered here: the shortcut/popup
 // gesture path and tab recording via tabCapture, both of which need a real user gesture.
@@ -589,6 +589,208 @@ try {
     await waitFor(() => evalIn(pop, `document.querySelectorAll('#recent li').length > 0`).catch(() => false), { label: 'popup recent', timeout: 10000 });
     const p = await evalIn(pop, `({ lang: document.documentElement.lang, h2: document.querySelector('[data-i18n="popup_screenshot"]').textContent, element: !!document.querySelector('[data-capture="element"]'), session: document.getElementById('btn-session-start').hidden })`);
     check('popup renders localized, with element and session controls', p.lang && p.h2 === 'Screenshot' && p.element && p.session === false, JSON.stringify(p));
+  }
+  // ---------------- next-up features: welcome, image import, shape editing, menus, save progress,
+  // undo delete, copy link, after-capture actions, time limit, settings transfer.
+  if (only === 'all' || only === 'ux') {
+    const setSync = (patch) => evalIn(swS, `chrome.storage.sync.set(${JSON.stringify(patch)}).then(() => true)`);
+    const captureIn = (s, cid) => evalIn(s, `import('/src/shared/db.js').then((m) => m.getCapture(${JSON.stringify(cid)}))`);
+    const cidOf = (url) => new URL(url).searchParams.get('capture');
+    const key = (s, k, mods = '') => evalIn(s, `document.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true, cancelable: true${mods} }))`);
+
+    // The required field set up for the bridge section would stop every save off the device here.
+    await evalIn(swS, `Promise.all([chrome.storage.sync.remove('customFields'), chrome.storage.local.remove('customFields')]).then(() => true)`);
+    check('install opens the welcome page', (await targets()).some((t) => t.url.endsWith('src/welcome/welcome.html')));
+    const welcomeT = (await targets()).find((t) => t.url.endsWith('src/welcome/welcome.html'));
+    if (welcomeT) {
+      const w = await attach(welcomeT.targetId, 'welcome');
+      await waitFor(() => evalIn(w, `document.querySelectorAll('#shortcuts li').length > 0`), { label: 'welcome shortcuts' });
+      await b.send('Target.activateTarget', { targetId: welcomeT.targetId });
+      await shot(w, 'welcome');
+        check('welcome page lists the commands', (await evalIn(w, `document.querySelectorAll('#shortcuts li').length`)) >= 5);
+    }
+
+    // Paste an image into the library.
+    await setSync({ 'webhook.url': 'https://acme.service-now.com/hook-fails' });
+    const { targetId: libT } = await b.send('Target.createTarget', { url: `chrome-extension://${id}/src/editor/editor.html?view=library` });
+    const lib = await attach(libT, 'library-ux');
+    await b.send('Target.activateTarget', { targetId: libT });
+    await waitFor(() => evalIn(lib, `!!document.getElementById('btn-open-image')`), { label: 'library ready' });
+    await evalIn(lib, `(async () => {
+      const c = new OffscreenCanvas(800, 500); const x = c.getContext('2d'); x.fillStyle = '#ddeeff'; x.fillRect(0, 0, 800, 500);
+      const dt = new DataTransfer(); dt.items.add(new File([await c.convertToBlob({ type: 'image/png' })], 'outside.png', { type: 'image/png' }));
+      document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    })()`);
+    const imported = await findTarget((t) => t.targetId === libT && t.url.includes('capture='), 'imported image opens');
+    const importedId = cidOf(imported.url);
+    await sleep(800);
+    const ed = lib;
+    const rec0 = await captureIn(ed, importedId);
+    check('a pasted image opens in the editor as a screenshot', rec0?.kind === 'screenshot' && rec0.title === 'outside' && rec0.source.imported === true, rec0?.title);
+
+    // Screen reader state and shape editing.
+    const a11y = await evalIn(ed, `(() => { document.querySelector('[data-tool="rect"]').click(); const r = document.querySelector('[data-tool="rect"]'), s = document.querySelector('[data-tool="select"]'); return { label: r.getAttribute('aria-label'), key: r.getAttribute('aria-keyshortcuts'), on: r.getAttribute('aria-pressed'), off: s.getAttribute('aria-pressed'), swatch: document.querySelector('[data-color].active')?.getAttribute('aria-pressed') }; })()`);
+    check('tool buttons expose name, shortcut and pressed state', a11y.label === 'Box' && a11y.key === 'R' && a11y.on === 'true' && a11y.off === 'false' && a11y.swatch === 'true', JSON.stringify(a11y));
+    const box = await center(ed, '#canvas');
+    await drag(ed, box.l + 40, box.t + 40, box.l + 140, box.t + 120);
+    await evalIn(ed, `document.querySelector('[data-tool="select"]').click()`);
+    await click(ed, box.l + 40, box.t + 80);
+    const shapes = async () => { await sleep(700); return (await captureIn(ed, importedId)).annotations.shapes; };
+    check('selecting a shape enables Duplicate', await evalIn(ed, `!document.getElementById('btn-duplicate').disabled`));
+    await key(ed, 'd', ', ctrlKey: true');
+    let list = await shapes();
+    check('Ctrl+D duplicates the selected shape, offset', list.length === 2 && list[1].props.x > list[0].props.x, `${list.length} shapes`);
+    const x0 = list[1].props.x;
+    await key(ed, 'ArrowRight');
+    await key(ed, 'ArrowRight', ', shiftKey: true');
+    list = await shapes();
+    const copyId = list[1].id;
+    check('arrow keys nudge (Shift: 10 px)', list[1].props.x === x0 + 11, `${x0} → ${list[1].props.x}`);
+    await key(ed, 'z', ', ctrlKey: true');
+    list = await shapes();
+    check('a run of nudges is one undo step', list[1].props.x === x0, `${list[1].props.x}`);
+    await key(ed, '[', ', ctrlKey: true');
+    list = await shapes();
+    check('Ctrl+[ sends the shape backward', list[0].id === copyId, list.map((s) => s.id.slice(0, 4)).join());
+
+    // Menu keyboard behavior.
+    await evalIn(ed, `document.getElementById('btn-export').click()`);
+    const firstFocused = await evalIn(ed, `document.activeElement.getAttribute('role') === 'menuitem' && document.getElementById('btn-export').getAttribute('aria-expanded') === 'true'`);
+    await evalIn(ed, `document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))`);
+    const moved = await evalIn(ed, `document.activeElement.textContent`);
+    await evalIn(ed, `document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+    const closed = await evalIn(ed, `document.getElementById('export-menu').hidden && document.activeElement.id === 'btn-export'`);
+    check('Export menu: focus moves in, arrows move, Esc closes and returns focus', firstFocused && moved === 'Copy image' && closed, moved);
+
+    // Save progress, with one destination failing.
+    await evalIn(ed, `document.getElementById('dest-webhook').click()`);
+    await evalIn(ed, `document.getElementById('btn-save').click()`);
+    await waitFor(() => evalIn(ed, `!document.getElementById('save-progress').hidden && !!document.querySelector('#save-progress .failed button') && !!document.querySelector('#save-progress .done')`), { label: 'save progress rows', timeout: 15000 });
+    const rows = await evalIn(ed, `[...document.querySelectorAll('#save-progress li')].map((l) => l.className + ':' + l.querySelector('strong').textContent)`);
+    check('save progress shows each destination, with Retry on the failure', rows.includes('failed:Webhook') && rows.includes('done:Download'), rows.join());
+    await shot(ed, 'save-progress');
+    const bar = await evalIn(ed, `document.querySelector('#save-progress progress').value`);
+    check('save progress bar reaches the end', bar === 1, String(bar));
+    await setSync({ 'webhook.url': '' });
+
+    // Copy link, from the save history and the library.
+    await evalIn(ed, `import('/src/shared/db.js').then((m) => m.updateCapture(${JSON.stringify(importedId)}, (c) => { c.saves.push({ adapter: 's3', ok: true, name: 'x.png', location: 'https://bucket.example/x.png', at: new Date().toISOString() }); }))`);
+    await evalIn(ed, `location.href = '?view=library'`);
+    await waitFor(() => evalIn(ed, `document.querySelectorAll('.lib-grid .card').length > 0`).catch(() => false), { label: 'library again' });
+    const cardSel = `.card[data-id="${importedId}"]`;
+    await sleep(300);
+    const links = await evalIn(ed, `[...document.querySelectorAll('${cardSel} .card-menu button')].map((b) => b.textContent)`);
+    check('library menu offers Copy link once a link exists', links.includes('Copy link'), links.join());
+
+    // Delete with undo.
+    const inMenu = (label) => `(() => { const c = document.querySelector('${cardSel}'); c.querySelector('.card-more').click(); [...c.querySelectorAll('.card-menu button')].find((b) => b.textContent === ${JSON.stringify(label)}).click(); })()`;
+    await evalIn(ed, inMenu('Delete'));
+    await waitFor(() => evalIn(ed, `!document.querySelector('${cardSel}')`), { label: 'card hidden' });
+    const undoLabel = await evalIn(ed, `document.querySelector('#toast button')?.textContent`);
+    await evalIn(ed, `document.querySelector('#toast button').click()`);
+    await waitFor(() => evalIn(ed, `!!document.querySelector('${cardSel}')`), { label: 'card restored' });
+    check('deleting offers Undo, which restores the capture', undoLabel === 'Undo' && !!(await captureIn(ed, importedId)));
+    await evalIn(ed, inMenu('Delete'));
+    await waitFor(() => evalIn(ed, `!document.querySelector('${cardSel}')`), { label: 'card hidden again' });
+    await evalIn(ed, `location.reload()`);
+    await waitFor(() => evalIn(ed, `import('/src/shared/db.js').then((m) => m.getCapture(${JSON.stringify(importedId)})).then((c) => !c)`).catch(() => false), { label: 'delete finished after leaving', timeout: 10000 }).catch(() => {});
+    check('leaving the page completes the delete', !(await captureIn(ed, importedId)));
+
+    // After-capture actions.
+    await b.send('Target.activateTarget', { targetId: snTarget });
+    const tabId = await evalIn(swS, `chrome.tabs.query({ url: 'https://acme.service-now.com/*' }).then((t) => t[0].id)`);
+    const newest = () => evalIn(ed, `import('/src/shared/db.js').then((m) => m.listCaptures(1)).then((l) => l[0])`);
+    const editorIds = async () => new Set((await targets()).filter((t) => t.url.includes('editor.html?capture=')).map((t) => t.targetId));
+    const beforeSave = (await newest())?.id;
+    let before = await editorIds();
+    await setSync({ 'capture.afterAction': 'save', defaultScreenshotDestinations: ['download'] });
+    await evalIn(swS, `chrome.tabs.update(${tabId}, { active: true }).then(() => true)`);
+    await evalIn(ed, `chrome.runtime.sendMessage({ type: 'capture:start', mode: 'visible', tabId: ${tabId}, delaySeconds: 0 })`);
+    const saved = await waitFor(async () => { const c = await newest(); return c && c.id !== beforeSave && c.saves?.some((s) => s.ok) && c; }, { label: 'quick save', timeout: 15000 });
+    await sleep(800);
+    const badgeOk = await evalIn(swS, `chrome.action.getBadgeText({})`);
+    const left = [...(await editorIds())].filter((t) => !before.has(t));
+    check('"save without opening" saves, closes its tab and confirms on the badge', saved.saves[0].adapter === 'download' && left.length === 0 && badgeOk === '✓', `badge "${badgeOk}", ${left.length} tabs left`);
+
+    await setSync({ 'webhook.url': 'https://acme.service-now.com/hook-fails', defaultScreenshotDestinations: ['webhook'], redactionReminder: true });
+    before = await editorIds();
+    await evalIn(ed, `chrome.runtime.sendMessage({ type: 'capture:start', mode: 'visible', tabId: ${tabId}, delaySeconds: 0 })`);
+    const blockedT = await waitFor(async () => (await targets()).find((t) => t.url.includes('editor.html?capture=') && !before.has(t.targetId)), { label: 'blocked quick save stays', timeout: 15000 });
+    const blocked = await attach(blockedT.targetId, 'blocked');
+    await waitFor(() => evalIn(blocked, `document.getElementById('toast').textContent.includes('Not saved yet')`), { label: 'blocker toast', timeout: 10000 });
+    const blockedCapture = await captureIn(blocked, cidOf(blockedT.url));
+    check('an upload that needs a check opens the editor instead of sending', !blockedCapture.saves.length && (await evalIn(blocked, `document.visibilityState === 'visible'`)));
+    await setSync({ 'webhook.url': '', defaultScreenshotDestinations: ['download'], redactionReminder: false, 'capture.afterAction': 'copy' });
+    await sleep(200);
+
+    before = await editorIds();
+    await evalIn(swS, `chrome.tabs.update(${tabId}, { active: true }).then(() => true)`);
+    await evalIn(ed, `chrome.runtime.sendMessage({ type: 'capture:start', mode: 'visible', tabId: ${tabId}, delaySeconds: 0 })`);
+    const copyT = await waitFor(async () => (await targets()).find((t) => t.url.includes('editor.html?capture=') && !before.has(t.targetId)), { label: 'copy editor opens', timeout: 15000 });
+    const copyS = await attach(copyT.targetId, 'copy');
+    await b.send('Emulation.setFocusEmulationEnabled', { enabled: true }, copyS);
+    const copyMsg = await waitFor(() => evalIn(copyS, `(() => { const t = document.getElementById('toast').textContent; return /copied|Copy failed/i.test(t) && t; })()`), { label: 'copy result', timeout: 10000 });
+    const cleanUrl = await evalIn(copyS, `!location.search.includes('after=')`);
+    check('"copy and open" copies on load, and not again on reload', /copied/i.test(copyMsg) && cleanUrl, copyMsg);
+    await setSync({ 'capture.afterAction': 'editor' });
+
+    // Time limit: warned on the badge and in the recorder, extendable, then a capture that says why it stopped.
+    await setSync({ 'recording.maxMinutes': 0.1 });
+    await b.send('Target.activateTarget', { targetId: snTarget });
+    const startRec = async (label) => {
+      const { targetId } = await b.send('Target.createTarget', { url: `chrome-extension://${id}/src/recorder/recorder.html` });
+      const s = await attach(targetId, label);
+      await sleep(1000);
+      await evalIn(s, `document.getElementById('opt-countdown').checked = false`);
+      const at = await center(s, '#btn-start');
+      await click(s, at.x, at.y);
+      await waitFor(() => evalIn(s, `!document.getElementById('live').hidden`), { label: 'recording live', timeout: 15000 });
+      return s;
+    };
+    const r1 = await startRec('limit-1');
+    await sleep(1600);
+    const warnBadge = await evalIn(swS, `chrome.action.getBadgeText({})`);
+    const warnText = await evalIn(r1, `document.getElementById('limit').hidden ? '' : document.getElementById('limit-text').textContent`);
+    check('the last minute counts down on the badge and in the recorder', /^0:0\d$/.test(warnBadge) && /Stops in \d+ s/.test(warnText), `${warnBadge} / ${warnText}`);
+    await evalIn(r1, `document.getElementById('btn-extend').click()`);
+    await sleep(1500);
+    const afterExtend = await evalIn(swS, `chrome.action.getBadgeText({})`);
+    check('Keep recording clears the warning', afterExtend === 'REC' && (await evalIn(r1, `document.getElementById('limit').hidden`)), afterExtend);
+    before = await editorIds();
+    await evalIn(r1, `document.getElementById('btn-stop').click()`);
+    await waitFor(async () => (await targets()).find((t) => t.url.includes('editor.html?capture=') && !before.has(t.targetId)), { label: 'stopped recording opens', timeout: 15000 });
+
+    await setSync({ 'recording.maxMinutes': 0.04 });
+    before = await editorIds();
+    await startRec('limit-2');
+    const limitT = await waitFor(async () => (await targets()).find((t) => t.url.includes('editor.html?capture=') && !before.has(t.targetId)), { label: 'limit stops the recording', timeout: 15000 });
+    const limitS = await attach(limitT.targetId, 'limit-editor');
+    const limited = await captureIn(limitS, cidOf(limitT.url));
+    check('a recording stopped by the limit says so', limited.kind === 'recording' && limited.warnings?.some((w) => w.includes('time limit')), limited.warnings?.join());
+    await setSync({ 'recording.maxMinutes': 10 });
+
+    // Settings export and import.
+    await evalIn(swS, `chrome.storage.local.set({ 'jira.apiToken': 'super-secret' }).then(() => true)`);
+    const { targetId: optT } = await b.send('Target.createTarget', { url: `chrome-extension://${id}/src/options/options.html#about` });
+    const opt = await attach(optT, 'options-ux');
+    await waitFor(() => evalIn(opt, `!!document.getElementById('btn-settings-export')`).catch(() => false), { label: 'options ready' });
+    await sleep(500);
+    await evalIn(opt, `document.getElementById('btn-settings-export').click()`);
+    const exportFile = join(downloads, 'snap-companion-settings.json');
+    await waitFor(() => { try { return statSync(exportFile).size > 0; } catch { return false; } }, { label: 'settings file', timeout: 10000 });
+    const exported = readFileSync(exportFile, 'utf8');
+    check('settings export has templates but no tokens', exported.includes('"templates"') && !exported.includes('super-secret'));
+    const edited = JSON.parse(exported);
+    edited.settings['gif.fps'] = 15;
+    edited.settings.bogus = true;
+    await evalIn(opt, `(() => {
+      window.confirm = () => true;
+      const dt = new DataTransfer(); dt.items.add(new File([${JSON.stringify(JSON.stringify(edited))}], 'settings.json', { type: 'application/json' }));
+      const input = document.getElementById('settings-file'); input.files = dt.files; input.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`);
+    await waitFor(() => evalIn(swS, `chrome.storage.sync.get('gif.fps').then((r) => r['gif.fps'] === 15)`), { label: 'imported setting', timeout: 8000 }).catch(() => {});
+    const imp = await evalIn(swS, `Promise.all([chrome.storage.sync.get(null), chrome.storage.local.get('jira.apiToken')]).then(([s, l]) => ({ fps: s['gif.fps'], bogus: 'bogus' in s, token: l['jira.apiToken'] }))`);
+    check('settings import applies known values and keeps tokens', imp.fps === 15 && !imp.bogus && imp.token === 'super-secret', JSON.stringify(imp));
   }
 } catch (err) {
   console.log('FATAL', err.message);

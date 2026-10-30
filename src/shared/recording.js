@@ -15,6 +15,9 @@ const MIME_CANDIDATES = [
   'video/webm',
 ];
 
+const WARN_MS = 60_000; // the last stretch before the time limit is shown on the badge
+const EXTEND_MS = 5 * 60_000; // what "Keep recording" adds
+
 export function pickMimeType() {
   return MIME_CANDIDATES.find((t) => MediaRecorder.isTypeSupported(t)) || '';
 }
@@ -99,7 +102,10 @@ export async function startRecording({ jobId, stream, opts = {}, source, service
   let startedAt = 0;
   let pausedAt = 0;
   let pausedTotal = 0;
-  let maxTimer = null;
+  let limitMs = opts.maxMinutes > 0 ? opts.maxMinutes * 60_000 : Infinity;
+  let limitTimer = null;
+  let warned = false;
+  let hitLimit = false;
 
   recorder.ondataavailable = (e) => {
     if (!e.data || !e.data.size) return;
@@ -121,7 +127,17 @@ export async function startRecording({ jobId, stream, opts = {}, source, service
   const thumbnail = grabFrame(stream);
   recorder.start(1000);
   startedAt = performance.now();
-  if (opts.maxMinutes > 0) maxTimer = setTimeout(stop, opts.maxMinutes * 60_000);
+
+  // The limit counts recorded time: pausing doesn't use it up.
+  const remainingMs = () => limitMs - (performance.now() - startedAt - pausedTotal - (pausedAt ? performance.now() - pausedAt : 0));
+  const checkLimit = () => {
+    const left = remainingMs();
+    if (left <= 0) { hitLimit = true; stop(); return; }
+    const warn = left <= WARN_MS;
+    if (warn || warned) chrome.runtime.sendMessage({ type: 'recording:limit', jobId, remainingMs: warn ? Math.round(left) : null }).catch(() => {});
+    warned = warn;
+  };
+  if (Number.isFinite(limitMs)) limitTimer = setInterval(checkLimit, 1000);
 
   // On-device captions from the microphone (§6); recording time excludes pauses.
   let captions = null;
@@ -138,7 +154,7 @@ export async function startRecording({ jobId, stream, opts = {}, source, service
   await updateJob(jobId, { state: 'recording', mimeType: recorder.mimeType || mimeType, source, servicenow });
 
   const done = stopped.then(async () => {
-    clearTimeout(maxTimer);
+    clearInterval(limitTimer);
     const cues = captions?.stop() || [];
     const end = performance.now();
     if (pausedAt) pausedTotal += end - pausedAt;
@@ -153,6 +169,7 @@ export async function startRecording({ jobId, stream, opts = {}, source, service
     if (writeError) {
       capture.warnings = [`Recording stopped early: ${writeError.name === 'QuotaExceededError' ? 'storage is full — clear the library' : writeError.message}`];
     }
+    if (hitLimit) capture.warnings = [...(capture.warnings || []), 'Stopped at the time limit. You can change it in Settings → Recording.'];
     if (mix.warnings.length) capture.warnings = [...(capture.warnings || []), ...mix.warnings];
     if (cues.length) capture.captions = cues;
     if (capture.warnings || cues.length) await saveCapture(capture);
@@ -169,6 +186,8 @@ export async function startRecording({ jobId, stream, opts = {}, source, service
       if (recorder.state === 'paused') { recorder.resume(); pausedTotal += performance.now() - pausedAt; pausedAt = 0; }
     },
     stop,
+    extend() { limitMs += EXTEND_MS; checkLimit(); },
+    remainingMs,
     get state() { return recorder.state; },
     done,
   };

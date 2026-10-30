@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Welcome to Snap Companion</title>
+  <link rel="icon" href="../../icons/32.png">
+  <link rel="stylesheet" href="../ui/common.css">
+  <link rel="stylesheet" href="welcome.css">
+</head>
+<body>
+  <main>
+    <header>
+      <img src="../../icons/48.png" alt="" width="40" height="40">
+      <div>
+        <h1>Welcome to Snap Companion</h1>
+        <p class="muted">Screenshots and screen recordings you can annotate, redact and send where they're needed. Captures stay on this device until you choose a destination.</p>
+      </div>
+    </header>
+
+    <section>
+      <h2>1. Pin it to the toolbar</h2>
+      <p>Click the puzzle-piece icon next to the address bar, then the pin beside <strong>Snap Companion</strong>. The icon is where every capture starts, and its badge shows recording and session status.</p>
+    </section>
+
+    <section>
+      <h2>2. Learn the shortcuts</h2>
+      <ul id="shortcuts" class="shortcuts"></ul>
+      <button id="btn-shortcuts">Change shortcuts</button>
+    </section>
+
+    <section>
+      <h2>3. Choose where captures go</h2>
+      <p>Everything can be downloaded with no setup. To send captures somewhere else, set up the destination first:</p>
+      <ul class="links">
+        <li><a href="../options/options.html#trackers">Jira, GitHub Issues or a webhook</a></li>
+        <li><a href="../options/options.html#s3">Amazon S3</a></li>
+        <li><a href="../options/options.html#saving">Default destinations and file names</a></li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>4. Using ServiceNow?</h2>
+      <p>Add the <code>/snap</code> command to SN Utils to attach captures to the record you're on. The script is <code>snutils/snap-command.js</code> in the extension folder. If your instance uses a custom domain, <a href="../options/options.html#servicenow">add it in Settings</a>.</p>
+    </section>
+
+    <section>
+      <h2>5. Recording narration?</h2>
+      <p>Chrome only lets extensions ask for the microphone from a visible page, so <a href="../options/options.html#recording">enable it once in Settings</a>.</p>
+    </section>
+
+    <footer class="row">
+      <button id="btn-library" class="primary">Open the library</button>
+      <button id="btn-settings">All settings</button>
+    </footer>
+  </main>
+  <script type="module" src="welcome.js"></script>
+</body>
+</html>

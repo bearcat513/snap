@@ -3,6 +3,7 @@
 /** Export format that produced a file name (inverse of ExportFactory naming). */
 export function formatForFile(name) {
   const ext = String(name || '').toLowerCase().split('.').pop();
+  if (['video', 'frames', 'sidecar'].includes(ext)) return ext; // a step that failed before a file was named
   if (ext === 'png') return 'png';
   if (ext === 'pdf') return 'pdf';
   if (ext === 'gif') return 'gif';
@@ -37,6 +38,12 @@ export function retryPlan(capture, order) {
     byAdapter.get(f.adapter).add(f.format);
   }
   return order.filter((id) => byAdapter.has(id)).map((id) => ({ id, formats: [...byAdapter.get(id)] }));
+}
+
+/** The URL to share for a capture: the newest issue link, otherwise the newest uploaded file. */
+export function shareLink(capture) {
+  const links = (capture?.saves || []).filter((s) => s.ok && /^https?:\/\//.test(s.location || ''));
+  return (links.filter((s) => s.issue).pop() || links.pop())?.location || null;
 }
 
 /** Keep only the fields a SaveResult stores on the capture. */

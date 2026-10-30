@@ -36,6 +36,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       case 'record:pause': current?.rec.pause(); return { ok: true };
       case 'record:resume': current?.rec.resume(); return { ok: true };
       case 'record:stop': current?.rec.stop(); return { ok: true };
+      case 'record:extend': current?.rec.extend(); return { ok: true };
       default: return { ok: false, error: `Unknown offscreen message ${msg.type}` };
     }
   })().then(sendResponse, (err) => sendResponse({ ok: false, error: err.message || String(err) }));

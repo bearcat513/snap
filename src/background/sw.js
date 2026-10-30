@@ -2,17 +2,17 @@
 // Stateless across restarts — job state lives in IndexedDB, small flags in storage.session.
 
 import { getSettings, migrateSettings } from '../shared/settings.js';
-import { enforceRetention, purgeEphemeralBlobs, getCapture } from '../shared/db.js';
+import { enforceRetention, purgeEphemeralBlobs, getCapture, deleteCapture } from '../shared/db.js';
 import { getJob, findJobs } from '../shared/jobs.js';
 import { isCapturableUrl } from '../shared/util.js';
 import { snapVisible, snapRegion, snapFullPage, snapElement, snapViewports } from './capture.js';
 import {
   startTabRecording, openRecorderWindow, onRecorderStarted, pauseRecording, resumeRecording,
-  stopRecording, onRecordingEnded, markInterrupted, togglePauseRecording, onRecordedClick, injectRecordingOverlays,
+  stopRecording, onRecordingEnded, markInterrupted, togglePauseRecording, extendRecording, onRecordedClick, injectRecordingOverlays,
 } from './recording-control.js';
 import * as bridge from './bridge.js';
 import { openEditor, openLibrary } from './editor-tabs.js';
-import { getRecording, setFlag, getFlag, refreshBadge, flashError } from './state.js';
+import { getRecording, setFlag, getFlag, refreshBadge, flashError, flashOk } from './state.js';
 import { syncCustomContentScripts } from './content-scripts.js';
 import { hasOffscreen } from './offscreen-client.js';
 import { getSession, startSession, addToSession, finishSession, cancelSession } from './session.js';
@@ -23,7 +23,8 @@ installErrorLogging('worker');
 
 // ---------- install / startup ----------
 
-chrome.runtime.onInstalled.addListener(async () => {
+chrome.runtime.onInstalled.addListener(async ({ reason }) => {
+  if (reason === 'install') chrome.tabs.create({ url: chrome.runtime.getURL('src/welcome/welcome.html') });
   chrome.contextMenus.removeAll(() => {
     const contexts = ['page', 'frame', 'selection', 'link', 'image'];
     const menu = (id, key) => chrome.contextMenus.create({ id, title: chrome.i18n.getMessage(key), contexts });
@@ -79,7 +80,10 @@ function assertCapturable(tab) {
 async function afterCapture(capture, tab) {
   if (!capture) return;
   await attachDevtools(capture.id, tab.id);
-  if (!(await addToSession(capture))) await openEditor(capture.id, { jobId: capture.jobId, nearTabId: tab.id });
+  if (!(await addToSession(capture))) {
+    const after = (await getSettings())['capture.afterAction'];
+    await openEditor(capture.id, { jobId: capture.jobId, nearTabId: tab.id, after: after === 'copy' || after === 'save' ? after : undefined });
+  }
   await applyRetention();
 }
 
@@ -174,6 +178,7 @@ const handlers = {
       recording, pending, session, devtools: tabId ? await isRecordingDevtools(tabId) : false,
       lastError: lastError && Date.now() - lastError.at < 60_000 ? lastError.message : null,
       quotaBlocked: !!(await getFlag('quotaBlocked')),
+      canExtend: !(await getSettings()).locked.includes('recording.maxMinutes'),
     };
   },
   'capture:start': async ({ mode, tabId, delaySeconds }) => {
@@ -214,6 +219,7 @@ const handlers = {
   'record:pause': async () => { await pauseRecording(); return { ok: true }; },
   'record:resume': async () => { await resumeRecording(); return { ok: true }; },
   'record:stop': async () => { await stopRecording(); return { ok: true }; },
+  'record:extend': async () => ({ ok: await extendRecording() }),
   'open:library': async () => { await openLibrary(); return { ok: true }; },
   'devtools:start': async ({ tabId }) => { await startDevtools(tabId); return { ok: true }; },
   'devtools:stop': async ({ tabId }) => { await stopDevtools(tabId); return { ok: true }; },
@@ -245,6 +251,10 @@ const handlers = {
     await applyRetention();
     return { ok: true };
   },
+  'recording:limit': async ({ jobId, remainingMs }) => {
+    if ((await getRecording())?.jobId === jobId) await setFlag('recLeft', remainingMs);
+    return { ok: true };
+  },
   'recording:failed': async ({ jobId, error }) => {
     logError('recording', error || 'Recording failed');
     await onRecordingEnded(jobId);
@@ -259,6 +269,13 @@ const handlers = {
     await applyRetention();
     return { ok: true };
   },
+  'library:delete': async ({ ids }) => {
+    for (const id of ids) await deleteCapture(id);
+    await setFlag('quotaBlocked', false);
+    await applyRetention();
+    return { ok: true };
+  },
+  'capture:auto-saved': async () => { await flashOk('saved to your default destinations'); return { ok: true }; },
   'sn:availability': (msg) => bridge.snAvailability(msg),
   'bridge.deliver': (msg) => bridge.handleDeliver(msg),
 

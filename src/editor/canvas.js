@@ -17,6 +17,16 @@ export function emptyDoc() {
   return { version: 1, shapes: [] };
 }
 
+/** Move a shape by (dx, dy) from `from` (its current props, or the props when a drag started). */
+function translated(type, from, dx, dy) {
+  if (type === 'arrow') return { x1: from.x1 + dx, y1: from.y1 + dy, x2: from.x2 + dx, y2: from.y2 + dy };
+  if (type === 'pen') return { points: from.points.map(([x, y]) => [x + dx, y + dy]) };
+  return { x: from.x + dx, y: from.y + dy };
+}
+
+// Shapes are painted in these groups (see paint), so layer order only means something within one.
+const paintGroup = (s) => (s.type === 'blur' || s.type === 'highlight' ? s.type : 'shape');
+
 function normRect(a, b) {
   return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) };
 }
@@ -168,6 +178,49 @@ export class Annotator extends EventTarget {
     this.selectedId = null;
     this.commit();
     this.emit('select');
+  }
+
+  /** Copy the selected shape, slightly offset, and select the copy. */
+  duplicateSelected() {
+    const s = this.selected;
+    if (!s) return;
+    const off = 12 * this.unit;
+    const copy = { id: crypto.randomUUID(), type: s.type, props: { ...clone(s.props), ...translated(s.type, s.props, off, off) } };
+    this.doc.shapes.push(copy);
+    this.selectedId = copy.id;
+    this.commit();
+    this.emit('select');
+  }
+
+  /** Move the selected shape by CSS px. A run of quick nudges is one undo step. */
+  nudgeSelected(dx, dy) {
+    const s = this.selected;
+    if (!s) return;
+    Object.assign(s.props, translated(s.type, s.props, dx * this.unit, dy * this.unit));
+    const now = Date.now();
+    if (this.lastNudge?.id === s.id && now - this.lastNudge.at < 800 && this.history.length > 1 && !this.future.length) {
+      this.history[this.history.length - 1] = this.snapshot();
+      this.render();
+      this.emit('change');
+    } else {
+      this.commit();
+    }
+    this.lastNudge = { id: s.id, at: now };
+  }
+
+  /** Bring the selected shape forward (+1) or send it back (-1) past its nearest neighbor in the same paint group. */
+  moveLayer(dir) {
+    const s = this.selected;
+    if (!s) return;
+    const shapes = this.doc.shapes;
+    const i = shapes.indexOf(s);
+    for (let j = i + dir; j >= 0 && j < shapes.length; j += dir) {
+      if (paintGroup(shapes[j]) !== paintGroup(s)) continue;
+      shapes.splice(i, 1);
+      shapes.splice(j, 0, s);
+      this.commit();
+      return;
+    }
   }
 
   clearCrop() {
@@ -413,9 +466,7 @@ export class Annotator extends EventTarget {
       const dy = p.y - this.drag.start.y;
       const o = this.drag.orig;
       if (this.drag.resize) this.resizeShape(s, this.drag.resize, o, this.drag.bounds, p);
-      else if (s.type === 'arrow') Object.assign(s.props, { x1: o.x1 + dx, y1: o.y1 + dy, x2: o.x2 + dx, y2: o.y2 + dy });
-      else if (s.type === 'pen') s.props.points = o.points.map(([x, y]) => [x + dx, y + dy]);
-      else Object.assign(s.props, { x: o.x + dx, y: o.y + dy });
+      else Object.assign(s.props, translated(s.type, o, dx, dy));
       this.drag.moved = true;
       this.render();
       return;

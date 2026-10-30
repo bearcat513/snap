@@ -27,21 +27,23 @@ After code changes, click the reload icon on the extension card. Service-worker 
 | Full page | Popup or context menu (scroll & stitch; DevTools method optional in Settings) |
 | Record this tab | <kbd>Alt+Shift+R</kbd> to start/stop, or the popup. No picker. Tab audio keeps playing. |
 | Record window / screen | Popup → *Window / screen*. This opens a small recorder window that shows Chrome's picker. |
-| Pause / resume / stop | <kbd>Alt+Shift+P</kbd> pauses/resumes any recording; the popup has all three (badge shows `REC` / `II`). Chrome's *Stop sharing* bar also ends it. |
-| Library | Popup → *Library*: captures kept in IndexedDB on this device, with a storage meter. Search (including transcripts), filter by kind/tag/"not saved"/"failed saves", re-export or **retry failed saves** from the ⋯ menu without opening the editor, a **frames ZIP** for recordings (a PNG every second, a PDF of all the frames, the video and a `.md` with frame timestamps), **Download all** to get every capture (annotated PNG or video, plus `.md` + `.json`) in one ZIP, and **Compare…** two screenshots side by side or stacked (the older one is "Before"). |
+| Pause / resume / stop | <kbd>Alt+Shift+P</kbd> pauses/resumes any recording; the popup has all three (badge shows `REC` / `II`). Chrome's *Stop sharing* bar also ends it. In the last minute before the time limit the badge counts down (`0:45`), and the popup and recorder window offer *Keep recording (+5 min)* unless policy sets the limit. Paused time doesn't count. |
+| Library | Popup → *Library*: captures kept in IndexedDB on this device, with a storage meter. Search (including transcripts), filter by kind/tag/"not saved"/"failed saves", re-export, **copy a saved link** or **retry failed saves** from the ⋯ menu without opening the editor, delete with a 10-second **Undo**, a **frames ZIP** for recordings (a PNG every second, a PDF of all the frames, the video and a `.md` with frame timestamps), **Download all** to get every capture (annotated PNG or video, plus `.md` + `.json`) in one ZIP, and **Compare…** two screenshots side by side or stacked (the older one is "Before"). |
+| Bring in another image | Library → *Open image…*, or paste (<kbd>Ctrl+V</kbd>) or drop an image on the library, to annotate and save a file you didn't capture here. |
 | Side panel | Popup → *Side panel*: recent captures beside the page. Drag one into a ticket, chat or email (screenshots go with their annotations and redactions), or *Copy*. |
 
 The **editor** opens in a tab after each capture:
 
 - **Tools:** select/move/resize `V`, crop `C`, arrow `A`, box `R`, ellipse `E`, pen `P`, text `T`, highlighter `H`, step markers `N`, blur/pixelate `B`. Undo with `Ctrl+Z`, redo with `Ctrl+Shift+Z`, delete with `Del`, save with `Ctrl+S`. Hold `Shift` to constrain shapes. Press `?` for the full list of shortcuts.
 - **Resize:** with Select, drag a shape's handles. Boxes, ellipses, highlights, redactions and pen strokes have eight; arrows have one at each end; text has one at its corner, which changes the font size.
+- **Arrange:** with a shape selected, `Ctrl+D` duplicates it, the arrow keys nudge it 1 px (`Shift`: 10 px), and `Ctrl+]` / `Ctrl+[` bring it forward or send it backward. Redactions and highlights always stay under other shapes.
 - **Zoom:** `Ctrl` + scroll (or pinch) zooms around the pointer, `Ctrl+=` / `Ctrl+−` step, and `Ctrl+0` or the *Fit* button toggles fit / 100%.
 - **Copy:** the *Copy* button or `Ctrl+C` puts the annotated, cropped image on the clipboard.
 - **Redaction** is applied to the pixels of the exported PNG/PDF, not drawn on top, so the hidden content can't be recovered.
 - **Suggested redactions:** at capture time the page's text and form fields are scanned on the device for email addresses, phone numbers, IP addresses, card numbers, tokens/keys, password fields and your own patterns. The editor offers to *Redact all*, *Review one by one* (click an outlined area to redact it) or *Dismiss*. Nothing is hidden until you choose, and saving off the device with unreviewed suggestions asks first. Only rectangles are kept, never the matched text.
 - **Context:** record URL, a one-line description (required for ServiceNow), steps to reproduce, notes, tags, and any extra fields defined in Settings (required ones must be filled before saving to S3 or ServiceNow). **Template ▾** pre-fills these from a template; a template can also swap in its own placeholder text and add its own fields (e.g. Expected / Actual for a bug, Severity for a UAT finding), which stay with the capture and appear in exports. Environment metadata (instance, table, record, browser, viewport, time, user) is filled in automatically.
 - **Video:** `Space` plays/pauses, `,` / `.` step one frame, `←` / `→` seek 1 s (`Shift`: 5 s), and `Home` / `End` jump to the ends of the trim. Trim with the timeline handles or *Set start* / *Set end* (`[` / `]`). Add keyframes for the PDF report (*＋ Keyframe*, `K`, or *Auto keyframes*). For tab recordings, *✦ Generate guide* turns the clicks you made into numbered steps ("Click “Resolve”") and a keyframe just before each click, marked in the PDF. Narrated recordings with captions on get a transcript (click a line to seek) and a `.vtt` file in the sidecar. *Download GIF* makes a looping GIF of up to the first 20 s of the exported range. *Redact region* lets you drag boxes over the video that pixelate or blur from the current time; adjust each region's time range with *Start/End = now*. The player previews the redactions live. On export the video is re-encoded with the trim and redactions. That runs in real time and needs the tab visible; the result is cached until you change the edits.
-- **Destinations:** tick any of *ServiceNow record*, *Jira*, *GitHub*, *Webhook* (once configured), *Amazon S3* and *Download*, and pick the formats for each (PNG, PDF report, video, GIF, frames ZIP, `.md` + `.json` sidecar). They save in order: S3, webhook, Jira, GitHub, ServiceNow, Download. That way the S3 link can go into the issue and the PDF attached to the record, and the issue link into the record's PDF and work note. Failed saves can be retried from the library; a retry attaches to the issue created the first time.
+- **Destinations:** tick any of *ServiceNow record*, *Jira*, *GitHub*, *Webhook* (once configured), *Amazon S3* and *Download*, and pick the formats for each (PNG, PDF report, video, GIF, frames ZIP, `.md` + `.json` sidecar). They save in order: S3, webhook, Jira, GitHub, ServiceNow, Download. That way the S3 link can go into the issue and the PDF attached to the record, and the issue link into the record's PDF and work note. While saving, a panel shows overall progress and each destination; one that fails doesn't stop the others and has its own *Retry*. Saves can also be retried from the library; a retry attaches to the issue created the first time. Uploaded files and issues get a *Copy link* button.
 
 ## Settings worth knowing
 
@@ -50,9 +52,10 @@ Small settings sync between your Chrome profiles. Templates, custom fields and t
 - **Editor & appearance:** light / dark / system theme for every extension page; the default tool, color, stroke width and redaction style; whether the editor starts with the style you used last; and the color palette (up to 16 swatches).
 - **Recording:** maximum resolution (720p, 1080p, 1440p or source), frame rate, and bitrate, with a file-size estimate. Recordings are only ever scaled down. *Show keyboard shortcuts and keys pressed* adds an on-page key overlay to tab recordings. It never shows password fields, and plain typing in a text box appears as "typing…". *Remember what I click* (on by default) keeps clicked elements' names and positions for guides, never typed values. *Captions and transcript* uses Chrome's on-device speech recognition only (with a *Download speech model* button); without it, nothing is recognised and no audio leaves the browser. GIF frame rate and width.
 - **Screenshots:** element padding, viewport widths, and suggested redactions (which patterns, plus your own regular expressions).
+- **After taking a screenshot:** open the editor, copy it and open the editor, or save to the default destinations without opening the editor (a ✓ on the badge confirms it). Saving falls back to the editor when something needs checking before an upload: suggested redactions, the personal-data reminder or a required field. `/snap` captures and sessions aren't affected.
 - **Saving:** both file-name patterns show a live example, with chips that insert tokens at the cursor.
 - **Issue trackers:** Jira (Cloud: site, email + API token; Server/Data Center: personal access token), GitHub Issues (repository, token, optional attachments branch: the API can't attach files to issues, so files are committed there and linked) and a webhook (`multipart/form-data` POST: a `metadata` JSON part plus each file). Chrome asks for access to each site on the first save.
-- **About & diagnostics:** the last 100 errors, kept on this device. *Copy diagnostics* puts the version, browser, settings without tokens and those errors on the clipboard, with URLs cut to their origin and path.
+- **About & diagnostics:** the last 100 errors, kept on this device. *Copy diagnostics* puts the version, browser, settings without tokens and those errors on the clipboard, with URLs cut to their origin and path. *Export settings* / *Import settings* move settings, templates, custom fields and the palette between devices or teammates in a JSON file; tokens and the Jira email are left out, and policy-managed values aren't changed.
 
 ## ServiceNow `/snap` command
 
@@ -122,7 +125,7 @@ Chrome 116 or later. Edge (Chromium) is expected to work the same way, and CI ru
 
 ## Localization
 
-Messages live in [`_locales/en/messages.json`](_locales/en/messages.json); add `_locales/<lang>/messages.json` to translate. Pages mark text with `data-i18n` attributes and scripts use `t()` from `src/ui/i18n.js`. So far the manifest, context menus, popup, recorder window and side panel are converted. The editor, library and Settings page are still English-only. `tests/i18n.test.js` fails if a referenced key is missing.
+Messages live in [`_locales/en/messages.json`](_locales/en/messages.json); add `_locales/<lang>/messages.json` to translate. Pages mark text with `data-i18n` attributes and scripts use `t()` from `src/ui/i18n.js`. So far the manifest, context menus, popup, recorder window and side panel are converted. The editor, library, Settings and welcome pages are still English-only. `tests/i18n.test.js` fails if a referenced key is missing.
 
 ## Tests
 
@@ -131,18 +134,20 @@ npm test          # unit: naming, bridge validation (+ limits), PDF writer, WebM
                   # planner, templates, custom fields, library search, palette + recording quality,
                   # settings storage split + quotas, retry planning, attachment limits, work notes,
                   # sensitive-text patterns, GIF encoder (LZW round trip), guides, captions/VTT,
-                  # issue text, devtools URL sanitizing, i18n keys
+                  # issue text, devtools URL sanitizing, i18n keys, settings export/import, save runner
 npm run test:e2e  # headless Chrome + mock ServiceNow over TLS: /snap → editor → suggested redaction →
                   # template/steps/tags/required field → annotate/redact → attach PDF + download PNG;
                   # replay/forgery rejection; full page; region; element; window recording → trim +
                   # timed redaction render, keyframe PDF, sidecar, GIF, generated guide; library
                   # search/tag filter/re-export; delayed capture; /snap session with instance limits
                   # and work note; Jira, GitHub and webhook (mocked) with a failed save retried from the
-                  # library; compare; viewports; console/network capture; side panel; options; popup
+                  # library; compare; viewports; console/network capture; side panel; options; popup; welcome page;
+                  # image paste; duplicate/nudge/layers; menu keys; save progress; undo delete; copy link;
+                  # after-capture actions; recording time limit; settings export/import
 node scripts/check-version.mjs v0.1.0   # release guard: tag = manifest = package.json
 ```
 
-Set `SNAP_E2E_SHOTS=/some/dir` to save screenshots of the key screens. The e2e run needs Chrome and `openssl`. Set `CHROME=/path/to/chrome` to use a different binary (e.g. Edge) and `CHROME_ARGS` for extra flags (CI uses `--no-sandbox`). It loads the extension through CDP's `Extensions.loadUnpacked`, so no Playwright or Puppeteer is needed. Pass a section name (`bridge`, `fullpage`, `region`, `record`, `library`, `extras`) to run just that part.
+Set `SNAP_E2E_SHOTS=/some/dir` to save screenshots of the key screens. The e2e run needs Chrome and `openssl`. Set `CHROME=/path/to/chrome` to use a different binary (e.g. Edge) and `CHROME_ARGS` for extra flags (CI uses `--no-sandbox`). It loads the extension through CDP's `Extensions.loadUnpacked`, so no Playwright or Puppeteer is needed. Pass a section name (`bridge`, `fullpage`, `region`, `record`, `library`, `extras`, `ux`) to run just that part.
 
 Not covered end to end, because they need a real user gesture or hardware: the shortcut/popup gesture path, tab recording via `tabCapture` (so click tracking during a real recording), on-device captions, and drag and drop from the side panel. Their logic is unit-tested.
 
@@ -163,6 +168,7 @@ src/storage/      adapter.js (registry), download.js, s3.js, servicenow.js, trac
 src/content/      content.js (bridge relay), region-select.js, element-select.js, sensitive-scan.js, fullpage.js,
                   click-highlight.js (rings + guide clicks), keystrokes.js
 src/sidepanel/    side-panel library (drag captures into other pages)
+src/welcome/      first-run page
 _locales/         messages for chrome.i18n
 src/bridge/       bridge.html iframe (delivers Blobs to the SN page)
 src/shared/       db.js (IndexedDB "snap"), settings.js, protocol.js, recording.js, captures.js, sensitive.js,

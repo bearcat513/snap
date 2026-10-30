@@ -49,6 +49,12 @@
     "message": "Snap Companion",
     "description": "Extension name"
   },
+  "limit_keep_recording": {
+    "message": "Keep recording (+5 min)"
+  },
+  "limit_stops_in": {
+    "message": "Stops in $1 s (time limit)"
+  },
   "menu_record_tab": {
     "message": "Record this tab"
   },

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pendingFailures, retryPlan, formatForFile } from '../src/shared/saves.js';
+import { pendingFailures, retryPlan, formatForFile, shareLink } from '../src/shared/saves.js';
 import { attachmentProblem, describeLimits, workNoteText, canRedeliver } from '../src/shared/sn.js';
 
 const at = (m) => `2026-10-24T10:${String(m).padStart(2, '0')}:00.000Z`;
@@ -63,4 +63,17 @@ test('a delivery can be retried after a total failure or a timeout, not after su
   assert.equal(canRedeliver({ state: 'done', results: [{ ok: true }, { ok: false }] }), false);
   assert.equal(canRedeliver({ state: 'claimed', at: 1000 }, 1000 + 60_000), false);
   assert.equal(canRedeliver({ state: 'claimed', at: 1000 }, 1000 + 6 * 60_000), true);
+});
+
+test('a step that failed before a file existed can still be retried', () => {
+  const c = { saves: [{ adapter: 's3', ok: false, name: 'video', error: 'x', at: at(1) }] };
+  assert.deepEqual(retryPlan(c, ['s3']), [{ id: 's3', formats: ['video'] }]);
+});
+
+test('shareLink prefers the newest issue, then the newest uploaded file', () => {
+  const file = (location, ok = true) => ({ adapter: 's3', ok, location });
+  assert.equal(shareLink({ saves: [] }), null);
+  assert.equal(shareLink({ saves: [{ adapter: 'download', ok: true, location: '/Users/x/Snap/a.png' }] }), null);
+  assert.equal(shareLink({ saves: [file('https://s3/a'), file('https://s3/b'), file('https://s3/c', false)] }), 'https://s3/b');
+  assert.equal(shareLink({ saves: [{ adapter: 'jira', ok: true, location: 'https://jira/A-1', issue: 'A-1' }, file('https://s3/b')] }), 'https://jira/A-1');
 });

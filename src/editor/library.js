@@ -5,17 +5,17 @@ import { listCaptures, getBlob, putBlob, blobSize, deleteCapture, clearLibrary, 
 import { buildZip, uniqueName } from '../shared/zip.js';
 import { formatDate } from '../shared/naming.js';
 import { findJobs, updateJob } from '../shared/jobs.js';
-import { finalizeRecording } from '../shared/captures.js';
+import { finalizeRecording, createScreenshotCapture } from '../shared/captures.js';
 import { getSettings } from '../shared/settings.js';
 import { formatBytes, formatDuration } from '../shared/util.js';
 import { ExportFactory, exportedDurationMs } from './export/files.js';
 import { needsRender, renderKey } from './video-tools.js';
 import { getAdapter, SAVE_ORDER, requestPlanOrigins } from '../storage/adapter.js';
-import { pendingFailures, retryPlan, toSaveRecord } from '../shared/saves.js';
+import { pendingFailures, retryPlan, toSaveRecord, shareLink } from '../shared/saves.js';
 import { logError } from '../shared/diagnostics.js';
 import { runSavePlan } from './save-runner.js';
 import { createComparison } from './compare.js';
-import { toast, confirmDialog, el } from './ui.js';
+import { toast, confirmDialog, el, wireMenu, copyLink } from './ui.js';
 
 const urls = [];
 const FILTER_KEY = 'snap.libraryFilter';
@@ -180,21 +180,123 @@ async function storageMeter(captures, total, settings) {
 
 const compare = { on: false, picked: [] }; // before/after selection mode
 
+// ---- deleting, with a moment to undo ----
+
+const UNDO_MS = 10_000;
+const pendingDeletes = new Set(); // hidden from the library; really deleted when the undo window ends
+let deleteTimer = null;
+
+async function flushDeletes() {
+  clearTimeout(deleteTimer);
+  const ids = [...pendingDeletes];
+  pendingDeletes.clear();
+  for (const id of ids) await deleteCapture(id);
+  if (ids.length) await chrome.runtime.sendMessage({ type: 'library:changed' }).catch(() => {});
+}
+
+function softDelete(id, rerender) {
+  pendingDeletes.add(id);
+  clearTimeout(deleteTimer);
+  deleteTimer = setTimeout(flushDeletes, UNDO_MS);
+  rerender();
+  const n = pendingDeletes.size;
+  toast(n === 1 ? 'Capture deleted.' : `${n} captures deleted.`, UNDO_MS, {
+    label: 'Undo',
+    onClick: () => {
+      clearTimeout(deleteTimer);
+      pendingDeletes.clear();
+      rerender();
+    },
+  });
+}
+
+// Leaving the page ends the undo window. The worker finishes the job, as this page may be gone first.
+function sendPendingDeletes() {
+  if (!pendingDeletes.size) return;
+  chrome.runtime.sendMessage({ type: 'library:delete', ids: [...pendingDeletes] }).catch(() => {});
+  pendingDeletes.clear();
+}
+
+// ---- bringing in images from elsewhere ----
+
+let importTarget = null; // { root, onOpen, rerender } of the library on screen
+
+async function importImages(files) {
+  const { onOpen, rerender } = importTarget;
+  const images = [...files].filter((f) => f.type.startsWith('image/'));
+  if (!images.length) { toast('That is not an image file.'); return; }
+  const created = [];
+  const problems = [];
+  for (const file of images) {
+    try {
+      const bmp = await createImageBitmap(file); // also rejects anything the editor couldn't open
+      const title = file.name ? file.name.replace(/\.[^.]+$/, '') : 'Pasted image';
+      created.push(await createScreenshotCapture({ blob: file, title, source: { url: '', title, dpr: 1, width: bmp.width, height: bmp.height, imported: true } }));
+      bmp.close();
+    } catch (err) {
+      problems.push(file.name || 'image');
+      logError('library:import', err.message);
+    }
+  }
+  await chrome.runtime.sendMessage({ type: 'library:changed' }).catch(() => {});
+  if (problems.length) toast(`Could not open ${problems.join(', ')}.`, 6000);
+  if (created.length === 1 && !problems.length) onOpen(created[0].id);
+  else {
+    if (created.length && !problems.length) toast(`Added ${created.length} images.`);
+    rerender();
+  }
+}
+
+function installImport() {
+  const active = () => importTarget && !importTarget.root.hidden;
+  document.addEventListener('paste', (e) => {
+    if (!active()) return;
+    const images = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
+    if (!images.length) return; // ordinary text pasted into the search box
+    e.preventDefault();
+    importImages(images);
+  });
+  const hasFiles = (e) => active() && [...(e.dataTransfer?.types || [])].includes('Files');
+  document.addEventListener('dragover', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    importTarget.root.classList.add('dropping');
+  });
+  document.addEventListener('dragleave', (e) => {
+    if (active() && !e.relatedTarget) importTarget.root.classList.remove('dropping');
+  });
+  document.addEventListener('drop', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    importTarget.root.classList.remove('dropping');
+    importImages(e.dataTransfer.files);
+  });
+}
+if (typeof document !== 'undefined') { // also imported by unit tests
+  installImport();
+  window.addEventListener('pagehide', sendPendingDeletes);
+}
+
 export async function renderLibrary(root, { onOpen }) {
   urls.splice(0).forEach((u) => URL.revokeObjectURL(u));
   root.replaceChildren();
   const settings = await getSettings();
-  const captures = await listCaptures();
+  const captures = (await listCaptures()).filter((c) => !pendingDeletes.has(c.id));
   let total = 0;
   for (const c of captures) for (const id of captureBlobIds(c)) total += await blobSize(id);
   const filter = loadFilter();
   const rerender = () => renderLibrary(root, { onOpen });
+  importTarget = { root, onOpen, rerender };
+  const filePicker = el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, id: 'lib-file', 'aria-label': 'Choose images to open' });
+  filePicker.addEventListener('change', () => { if (filePicker.files.length) importImages(filePicker.files); });
 
   const failing = captures.filter((c) => pendingFailures(c).length).length;
   root.append(el('header', { class: 'lib-head' },
     el('h1', { text: 'Library' }),
     el('span', { class: 'muted', text: `${captures.length} capture${captures.length === 1 ? '' : 's'} · stored only on this device${failing ? ` · ${failing} with failed saves` : ''}` }),
     el('div', { class: 'spacer' }),
+    filePicker,
+    el('button', { id: 'btn-open-image', title: 'Annotate an image from elsewhere. You can also paste one (Ctrl+V) or drop it here.', onclick: () => filePicker.click() }, 'Open image…'),
     el('button', {
       id: 'btn-compare',
       'aria-pressed': String(compare.on),
@@ -217,6 +319,7 @@ export async function renderLibrary(root, { onOpen }) {
       onclick: async () => {
         const ok = await confirmDialog({ title: 'Clear library?', message: 'All captures stored in this browser will be deleted. Files you already saved elsewhere are not affected.', ok: 'Delete all' });
         if (!ok) return;
+        await flushDeletes();
         await clearLibrary();
         await chrome.runtime.sendMessage({ type: 'library:changed' }).catch(() => {});
         rerender();
@@ -263,7 +366,7 @@ export async function renderLibrary(root, { onOpen }) {
   }
 
   if (!captures.length) {
-    root.append(el('p', { class: 'empty muted' }, 'No captures yet. Use the toolbar button or ', el('kbd', { text: 'Alt+Shift+S' }), ' to take one.'));
+    root.append(el('p', { class: 'empty muted' }, 'No captures yet. Use the toolbar button or ', el('kbd', { text: 'Alt+Shift+S' }), ' to take one, or paste or drop an image here.'));
     return;
   }
 
@@ -336,27 +439,18 @@ export async function renderLibrary(root, { onOpen }) {
     const menu = el('div', { class: 'menu-list card-menu', role: 'menu', hidden: true },
       ...formats.map(([f, label]) => el('button', {
         role: 'menuitem',
-        onclick: async (e) => { e.stopPropagation(); menu.hidden = true; await quickExport(c, f, settings); rerender(); },
+        onclick: async () => { await quickExport(c, f, settings); rerender(); },
       }, `Download ${label}`)),
       failures.length ? el('button', {
         role: 'menuitem',
-        onclick: async (e) => { e.stopPropagation(); menu.hidden = true; await retryFailed(c, settings); rerender(); },
+        onclick: async () => { await retryFailed(c, settings); rerender(); },
       }, `Retry failed saves (${failures.length})`) : null,
+      shareLink(c) ? el('button', { role: 'menuitem', onclick: () => copyLink(shareLink(c)) }, 'Copy link') : null,
       el('button', { role: 'menuitem', onclick: () => onOpen(c.id) }, 'Open in editor'),
       el('button', {
         role: 'menuitem',
         class: 'danger',
-        onclick: async (e) => {
-          e.stopPropagation();
-          menu.hidden = true;
-          if (!okSaves.length) {
-            const ok = await confirmDialog({ title: 'Delete capture?', message: 'This capture has not been saved anywhere else. It will be gone for good.', ok: 'Delete' });
-            if (!ok) return;
-          }
-          await deleteCapture(c.id);
-          await chrome.runtime.sendMessage({ type: 'library:changed' }).catch(() => {});
-          rerender();
-        },
+        onclick: () => softDelete(c.id, rerender),
       }, 'Delete'));
     const durationMs = c.kind === 'recording' && c.source?.durationMs ? exportedDurationMs(c) : 0;
     const pickable = compare.on && c.kind === 'screenshot';
@@ -367,6 +461,8 @@ export async function renderLibrary(root, { onOpen }) {
       compare.picked = picked ? compare.picked.filter((x) => x !== c.id) : [...compare.picked, c.id].slice(-2);
       rerender();
     };
+    const more = el('button', { class: 'card-more', title: 'Export / delete', 'aria-label': `Actions for ${c.title}` }, '⋯');
+    wireMenu(more, menu);
     const card = el('li', { class: `card${picked ? ' picked' : ''}${compare.on && !pickable ? ' dim' : ''}`, 'data-id': c.id },
       el('button', { class: 'card-open', onclick: open, title: compare.on ? (pickable ? 'Pick for comparison' : 'Only screenshots can be compared') : 'Open in editor', 'aria-pressed': compare.on ? String(picked) : null },
         el('div', { class: 'thumb' }, media,
@@ -382,23 +478,12 @@ export async function renderLibrary(root, { onOpen }) {
             failures.length ? el('span', { class: 'chip fail', title: failures.map((f) => `${DEST_NAMES[f.adapter] || f.adapter}: ${f.error}`).join('\n'), text: 'Save failed' }) : null,
             (c.context?.tags || []).map((t) => el('span', { class: 'chip tag-chip', text: `#${t}` }))),
         )),
-      el('div', { class: 'menu card-actions' },
-        el('button', {
-          class: 'card-more', title: 'Export / delete', 'aria-label': `Actions for ${c.title}`, 'aria-haspopup': 'true',
-          onclick: (e) => {
-            e.stopPropagation();
-            const wasHidden = menu.hidden;
-            document.querySelectorAll('.card-menu').forEach((m) => { m.hidden = true; });
-            menu.hidden = !wasHidden;
-          },
-        }, '⋯'),
-        menu));
+      el('div', { class: 'menu card-actions' }, more, menu));
     cards.push({ capture: c, card });
     grid.append(card);
   }
   const empty = el('p', { class: 'empty muted', hidden: true, text: 'No captures match.' });
   root.append(grid, empty);
-  document.addEventListener('click', () => document.querySelectorAll('.card-menu').forEach((m) => { m.hidden = true; }));
 
   function apply() {
     let shown = 0;

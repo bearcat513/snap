@@ -10,10 +10,11 @@ import { ExportFactory } from './export/files.js';
 import { ContextForm } from './context-form.js';
 import { VideoEditor } from './video-editor.js';
 import { renderLibrary } from './library.js';
-import { toast, confirmDialog, el } from './ui.js';
+import { toast, confirmDialog, el, wireMenu, copyLink } from './ui.js';
+import { SaveProgress } from './save-progress.js';
 import { getAdapter, SAVE_ORDER, requestPlanOrigins } from '../storage/adapter.js';
 import { runSavePlan } from './save-runner.js';
-import { toSaveRecord } from '../shared/saves.js';
+import { toSaveRecord, shareLink } from '../shared/saves.js';
 import { describeLimits } from '../shared/sn.js';
 import '../ui/theme.js';
 import { logError, installErrorLogging } from '../shared/diagnostics.js';
@@ -23,6 +24,13 @@ installErrorLogging('editor');
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const settings = await getSettings();
+
+// What the worker asked for after a screenshot (Settings → Saving). Only once: not again on reload.
+const afterAction = params.get('after');
+if (afterAction) {
+  params.delete('after');
+  history.replaceState(null, '', `?${params}`);
+}
 
 let capture = null;
 let annotator = null;
@@ -105,6 +113,42 @@ async function openCapture(id) {
 
   await setupDestinations();
   renderSaves();
+  if (afterAction && annotator) await runAfterAction();
+}
+
+async function runAfterAction() {
+  if (afterAction === 'copy') {
+    // A new tab may not have focus yet, and the clipboard needs it.
+    if (!document.hasFocus()) await new Promise((r) => { window.addEventListener('focus', r, { once: true }); setTimeout(r, 2000); });
+    await copyImage();
+  } else if (afterAction === 'save') {
+    await autoSave();
+  }
+}
+
+/** Why a capture can't be saved without the user looking at it, or '' if it can. */
+function autoSaveBlocker(plan) {
+  if (!plan.length) return 'no default destination is available.';
+  if (!plan.some((p) => p.id !== 'download')) return '';
+  if (pendingSuggestions().length) return `review the suggested redactions (${describeSuggestions(pendingSuggestions())}).`;
+  if (needsRedactionReminder(plan)) return 'check it for personal data first.';
+  const missing = contextForm.missingRequired();
+  return missing.length ? `fill in ${missing.map((f) => f.label).join(', ')}.` : '';
+}
+
+/** This tab opened in the background: save to the defaults and close, or come forward if it can't. */
+async function autoSave() {
+  const plan = destinationPlan();
+  const blocker = autoSaveBlocker(plan);
+  const results = blocker ? null : await save(plan);
+  const tab = await chrome.tabs.getCurrent();
+  if (results?.every((r) => r.ok)) {
+    await chrome.runtime.sendMessage({ type: 'capture:auto-saved' }).catch(() => {});
+    await chrome.tabs.remove(tab.id);
+    return;
+  }
+  await chrome.tabs.update(tab.id, { active: true });
+  if (blocker) toast(`Not saved yet: ${blocker}`, 8000);
 }
 
 /** Templates can name ServiceNow tables; apply the match once, to a new /snap capture. */
@@ -238,26 +282,35 @@ function renderSwatches(extra) {
   })));
 }
 
+/** Show which button of a set is on, visually and to screen readers. */
+function markActive(selector, isActive) {
+  document.querySelectorAll(selector).forEach((b) => {
+    const on = isActive(b);
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
+}
+
 function setTool(tool) {
   if (!annotator) return;
   commitText();
   annotator.setTool(tool);
-  document.querySelectorAll('[data-tool]').forEach((b) => b.classList.toggle('active', b.dataset.tool === tool));
+  markActive('[data-tool]', (b) => b.dataset.tool === tool);
   if (tool !== 'crop') rememberStyle({ tool });
 }
 function setColor(color) {
   annotator?.setColor(color);
-  document.querySelectorAll('[data-color]').forEach((b) => b.classList.toggle('active', b.dataset.color === color.toLowerCase()));
+  markActive('[data-color]', (b) => b.dataset.color === color.toLowerCase());
   rememberStyle({ color });
 }
 function setWidth(w) {
   annotator?.setStrokeWidth(w);
-  document.querySelectorAll('[data-width]').forEach((b) => b.classList.toggle('active', Number(b.dataset.width) === w));
+  markActive('[data-width]', (b) => Number(b.dataset.width) === w);
   rememberStyle({ width: w });
 }
 function setBlurMode(mode) {
   annotator?.setBlurMode(mode);
-  document.querySelectorAll('[data-blur]').forEach((b) => b.classList.toggle('active', b.dataset.blur === mode));
+  markActive('[data-blur]', (b) => b.dataset.blur === mode);
   rememberStyle({ blurMode: mode });
 }
 
@@ -265,7 +318,7 @@ function syncToolState() {
   if (!annotator) return;
   $('btn-undo').disabled = !annotator.canUndo;
   $('btn-redo').disabled = !annotator.canRedo;
-  $('btn-delete').disabled = !annotator.selected;
+  for (const id of ['btn-delete', 'btn-duplicate', 'btn-forward', 'btn-backward']) $(id).disabled = !annotator.selected;
   $('btn-clear-crop').disabled = !annotator.doc.crop;
 }
 
@@ -275,6 +328,9 @@ document.querySelectorAll('[data-blur]').forEach((b) => b.addEventListener('clic
 $('btn-undo').addEventListener('click', () => annotator?.undo());
 $('btn-redo').addEventListener('click', () => annotator?.redo());
 $('btn-delete').addEventListener('click', () => annotator?.deleteSelected());
+$('btn-duplicate').addEventListener('click', () => annotator?.duplicateSelected());
+$('btn-forward').addEventListener('click', () => annotator?.moveLayer(1));
+$('btn-backward').addEventListener('click', () => annotator?.moveLayer(-1));
 $('btn-clear-crop').addEventListener('click', () => annotator?.clearCrop());
 
 // Zoom: null = fit to the stage; otherwise a factor of the capture's CSS size (1 = 100%).
@@ -391,6 +447,14 @@ $('text-input').addEventListener('keydown', (e) => {
 
 const KEY_TOOLS = { v: 'select', c: 'crop', a: 'arrow', r: 'rect', e: 'ellipse', p: 'pen', t: 'text', h: 'highlight', n: 'step', b: 'blur' };
 
+// Rail buttons are a glyph plus a caption: name them by the caption alone, and announce their keys.
+for (const b of document.querySelectorAll('#tools button')) {
+  b.setAttribute('aria-label', b.querySelector('span')?.textContent || b.title);
+  const key = Object.keys(KEY_TOOLS).find((k) => KEY_TOOLS[k] === b.dataset.tool);
+  if (key) b.setAttribute('aria-keyshortcuts', key.toUpperCase());
+}
+const NUDGES = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+
 function videoKey(e) {
   const v = videoEditor;
   // The native player and the timeline handle Space/arrows themselves while focused.
@@ -424,9 +488,17 @@ document.addEventListener('keydown', (e) => {
   if (mod && e.key === '-') { e.preventDefault(); zoomBy(0.8); return; }
   if (mod && e.key === '0') { e.preventDefault(); setZoom(zoom === null ? 1 : null); return; }
   if (mod && e.key.toLowerCase() === 'c' && !e.shiftKey && !String(window.getSelection())) { e.preventDefault(); copyImage(); return; }
+  if (mod && e.key.toLowerCase() === 'd') { e.preventDefault(); annotator.duplicateSelected(); return; }
+  if (mod && annotator.selected && (e.key === ']' || e.key === '[')) { e.preventDefault(); annotator.moveLayer(e.key === ']' ? 1 : -1); return; }
   if (mod || e.altKey) return;
   if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); annotator.deleteSelected(); return; }
   if (e.key === 'Escape') { setTool('select'); return; }
+  if (NUDGES[e.key] && annotator.selected) {
+    e.preventDefault();
+    const step = e.shiftKey ? 10 : 1;
+    annotator.nudgeSelected(NUDGES[e.key][0] * step, NUDGES[e.key][1] * step);
+    return;
+  }
   const tool = KEY_TOOLS[e.key.toLowerCase()];
   if (tool) setTool(tool);
 });
@@ -701,33 +773,40 @@ function needsRedactionReminder(plan) {
   return settings.redactionReminder && !hasRedaction() && plan.some((p) => p.id !== 'download');
 }
 
-/** plan: [{ id, formats: [] }] in SAVE_ORDER. Defaults to the destinations panel. */
+const destinationPlan = () => SAVE_ORDER
+  .filter((id) => dest[id]?.on && dest[id].available && dest[id].formats.size)
+  .map((id) => ({ id, formats: [...dest[id].formats] }));
+
+const saveProgress = new SaveProgress({ root: $('save-progress'), onRetry: (step) => save([step]) });
+
+/**
+ * plan: [{ id, formats: [] }] in SAVE_ORDER. Defaults to the destinations panel.
+ * Returns the save results, or nothing if the save didn't start.
+ */
 async function save(plan) {
-  if (busy || !capture) return;
-  plan = plan || SAVE_ORDER
-    .filter((id) => dest[id]?.on && dest[id].available && dest[id].formats.size)
-    .map((id) => ({ id, formats: [...dest[id].formats] }));
-  if (!plan.length) { toast('Choose at least one destination and file format.'); return; }
+  if (busy || !capture) return undefined;
+  plan = plan || destinationPlan();
+  if (!plan.length) { toast('Choose at least one destination and file format.'); return undefined; }
   const blocked = plan.find((p) => !dest[p.id]?.available);
-  if (blocked) { toast(dest[blocked.id]?.reason || 'That destination is unavailable.'); return; }
+  if (blocked) { toast(dest[blocked.id]?.reason || 'That destination is unavailable.'); return undefined; }
 
   // Permission prompt must come first, while we still hold the click's user gesture.
   const access = await requestPlanOrigins(plan, settings);
   if (!access.ok) {
     toast(`Access to ${access.origins.map((o) => o.replace('/*', '')).join(', ')} was not granted.`);
-    return;
+    return undefined;
   }
   if (plan.some((p) => p.id === 'servicenow') && !$('ctx-description').value.trim()) {
     $('ctx-description').classList.add('invalid');
     $('ctx-description').focus();
     toast('Add a one-line description before attaching to ServiceNow.');
-    return;
+    return undefined;
   }
   const missing = plan.some((p) => p.id !== 'download') ? contextForm.missingRequired() : [];
   if (missing.length) {
     contextForm.markMissing(missing);
     toast(`Fill in ${missing.map((f) => f.label).join(', ')} before saving to ${plan.filter((p) => p.id !== 'download').map((p) => getAdapter(p.id).label).join(' or ')}.`);
-    return;
+    return undefined;
   }
   const leaves = plan.some((p) => p.id !== 'download');
   if (leaves && sessionPendingSuggestions().length) {
@@ -738,7 +817,7 @@ async function save(plan) {
       ok: 'Save anyway',
       cancel: 'Go back',
     });
-    if (!ok) return;
+    if (!ok) return undefined;
   } else if (leaves && pendingSuggestions().length) {
     const ok = await confirmDialog({
       title: 'Suggested redactions not applied',
@@ -746,7 +825,7 @@ async function save(plan) {
       ok: 'Save anyway',
       cancel: 'Go back',
     });
-    if (!ok) return;
+    if (!ok) return undefined;
   } else if (needsRedactionReminder(plan)) {
     const ok = await confirmDialog({
       title: 'Check for personal data',
@@ -754,18 +833,23 @@ async function save(plan) {
       ok: 'Save anyway',
       cancel: 'Go back',
     });
-    if (!ok) return;
+    if (!ok) return undefined;
   }
 
   await persist();
   setBusy(true, 'Preparing files…');
-  const factory = new ExportFactory({ capture, annotator, settings, onProgress: (msg) => { $('save-status').textContent = msg; } });
+  saveProgress.start(plan, (id) => getAdapter(id).label);
+  const factory = new ExportFactory({
+    capture, annotator, settings,
+    onProgress: (msg, fraction) => { $('save-status').textContent = msg; saveProgress.detail(msg, fraction); },
+  });
   let results;
   try {
-    results = await runSavePlan({ plan, factory, ctx: adapterCtx, onStatus: (msg) => setBusy(true, msg) });
+    results = await runSavePlan({ plan, factory, ctx: adapterCtx, onStatus: (msg) => setBusy(true, msg), onStep: (id, step) => saveProgress.step(id, step) });
   } finally {
     setBusy(false);
   }
+  saveProgress.finish();
 
   const mine = results.filter((r) => !r.persisted).map(toSaveRecord);
   capture = (await updateCapture(capture.id, (c) => { c.saves = [...(c.saves || []), ...mine]; })) || capture;
@@ -777,11 +861,13 @@ async function save(plan) {
   for (const r of failed) logError(`save:${r.adapter}`, r.error || 'Save failed', { file: r.name, kind: capture.kind });
   if (!failed.length) {
     $('save-status').textContent = `Saved ${results.length} file${results.length === 1 ? '' : 's'}`;
-    toast(factory.warnings.length ? `Saved. ${factory.warnings.join(' ')}` : 'Saved.', factory.warnings.length ? 6000 : 3500);
+    const link = shareLink({ saves: mine });
+    toast(factory.warnings.length ? `Saved. ${factory.warnings.join(' ')}` : 'Saved.', link ? 8000 : factory.warnings.length ? 6000 : 3500, link ? { label: 'Copy link', onClick: () => copyLink(link) } : undefined);
   } else {
     $('save-status').textContent = `${failed.length} of ${results.length} failed`;
     toast(`${failed.length} save${failed.length === 1 ? '' : 's'} failed: ${failed[0].error}`, 6000);
   }
+  return results;
 }
 
 async function refreshThumbnail() {
@@ -806,7 +892,8 @@ function renderSaves() {
     else if (s.adapter === 'download' && s.downloadId) {
       detail = el('span', { class: 'detail' }, el('a', { href: '#', onclick: (e) => { e.preventDefault(); chrome.downloads.show(s.downloadId); }, text: 'Show in folder' }));
     } else if (/^https?:\/\//.test(s.location || '')) {
-      detail = el('span', { class: 'detail' }, el('a', { href: s.location, target: '_blank', rel: 'noopener', text: s.location }));
+      detail = el('span', { class: 'detail' }, el('a', { href: s.location, target: '_blank', rel: 'noopener', text: s.location }), ' ',
+        el('button', { class: 'link-btn', onclick: () => copyLink(s.location) }, 'Copy link'));
     } else detail = el('span', { class: 'detail', text: s.location || '' });
     return el('li', {},
       el('span', { class: `st ${s.ok ? 'ok' : 'fail'}`, text: s.ok ? '✓' : '✕' }),
@@ -827,14 +914,8 @@ $('btn-save').addEventListener('click', () => save());
 
 // Export menu: one-off downloads.
 const menu = $('export-menu');
-$('btn-export').addEventListener('click', (e) => {
-  e.stopPropagation();
-  menu.hidden = !menu.hidden;
-  $('btn-export').setAttribute('aria-expanded', String(!menu.hidden));
-});
-document.addEventListener('click', () => { menu.hidden = true; $('btn-export').setAttribute('aria-expanded', 'false'); });
+wireMenu($('btn-export'), menu);
 menu.querySelectorAll('[data-export]').forEach((b) => b.addEventListener('click', async () => {
-  menu.hidden = true;
   const fmt = b.dataset.export;
   if (fmt === 'clipboard') { copyImage(); return; }
   save([{ id: 'download', formats: [fmt] }]);

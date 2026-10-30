@@ -140,6 +140,12 @@ export async function togglePauseRecording() {
   if (rec.paused) await resumeRecording(); else await pauseRecording();
 }
 
+/** Push back the time limit, unless policy sets it. */
+export async function extendRecording() {
+  if ((await getSettings()).locked.includes('recording.maxMinutes')) return false;
+  return !!(await sendControl('record:extend'));
+}
+
 export async function stopRecording() {
   return sendControl('record:stop');
 }

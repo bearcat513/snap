@@ -36,6 +36,14 @@
         </fieldset>
       </div>
       <p class="small muted">The ServiceNow record is always pre-selected when a capture starts from <code>/snap</code>.</p>
+      <label class="field"><span>After taking a screenshot</span>
+        <select data-key="capture.afterAction">
+          <option value="editor">Open the editor</option>
+          <option value="copy">Copy it and open the editor</option>
+          <option value="save">Save to the default destinations, without opening the editor</option>
+        </select>
+        <small class="muted">Saving without the editor falls back to opening it if there's something to check first, such as suggested redactions before an upload. <code>/snap</code> captures and sessions always work as before.</small>
+      </label>
       <label class="field"><span>Attach to ServiceNow by default as</span>
         <select data-key="snDefaultFormat"><option value="pdf">PDF report</option><option value="png">PNG image</option></select>
       </label>
@@ -280,6 +288,14 @@
         <span id="diag-status" class="small muted"></span>
       </div>
       <ul id="diag-list" class="diag-list"></ul>
+      <h3>Back up or share settings</h3>
+      <p class="small muted">Saves your settings, templates, custom fields and palette to a file you can import on another device or give to a teammate. Tokens and your Jira email are left out, and settings managed by your organization aren't changed.</p>
+      <div class="row">
+        <button id="btn-settings-export">Export settings</button>
+        <button id="btn-settings-import">Import settings…</button>
+        <input type="file" id="settings-file" accept="application/json,.json" hidden aria-label="Settings file to import">
+        <button id="btn-welcome" class="ghost">Show the welcome page</button>
+      </div>
     </section>
 
     <section id="tab-shortcuts" class="panel" role="tabpanel" data-tab="shortcuts" data-title="Keyboard shortcuts">

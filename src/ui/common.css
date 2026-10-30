@@ -128,7 +128,8 @@ label.field > span { display: block; font-weight: 500; margin-bottom: 4px; }
   max-width: min(560px, calc(100vw - 32px));
   z-index: 100;
 }
-.toast.show { opacity: 1; }
+.toast.show { opacity: 1; pointer-events: auto; }
+.toast button { margin-left: 8px; padding: 2px 8px; color: inherit; background: transparent; border-color: currentColor; }
 
 .chip {
   display: inline-flex;

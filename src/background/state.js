@@ -9,7 +9,7 @@ export async function getRecording() {
 
 export async function setRecording(rec) {
   if (rec) await chrome.storage.session.set({ [REC_KEY]: rec });
-  else await chrome.storage.session.remove(REC_KEY);
+  else await chrome.storage.session.remove([REC_KEY, 'recLeft']);
   await refreshBadge();
 }
 
@@ -43,6 +43,15 @@ export async function flashError(message) {
   flashTimer = setTimeout(() => refreshBadge(), 5000);
 }
 
+/** Brief confirmation on the badge, for work that finished without opening a page. */
+export async function flashOk(message) {
+  await chrome.action.setBadgeBackgroundColor({ color: '#30a46c' });
+  await chrome.action.setBadgeText({ text: '✓' });
+  await chrome.action.setTitle({ title: `Snap Companion — ${message}` });
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => refreshBadge(), 3000);
+}
+
 export async function refreshBadge() {
   const rec = await getRecording();
   const warn = await getFlag('libraryWarn');
@@ -59,6 +68,13 @@ export async function refreshBadge() {
     text = rec.paused ? 'II' : 'REC';
     color = rec.paused ? '#b45309' : '#d93025';
     title = rec.paused ? 'Snap Companion — recording paused' : 'Snap Companion — recording';
+    const left = await getFlag('recLeft'); // set only in the last minute before the time limit
+    if (!rec.paused && Number.isFinite(left)) {
+      const s = Math.max(0, Math.ceil(left / 1000));
+      text = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+      color = s > 30 ? '#b45309' : '#d93025';
+      title = `Snap Companion — the recording stops in ${s} s (time limit)`;
+    }
   } else if (quota) {
     text = '!';
     title = 'Snap Companion — storage full: clear the library to record again';

@@ -32,6 +32,7 @@
       <button id="btn-save" class="primary">Save</button>
     </header>
 
+    <div id="save-progress" class="save-progress" hidden></div>
     <div id="warnings" class="warn-banner" hidden></div>
     <div id="suggest-banner" class="suggest-banner" role="status" hidden>
       <span id="suggest-text"></span>
@@ -54,13 +55,13 @@
           <button data-tool="step" title="Step marker (N)">①<span>Step</span></button>
           <button data-tool="blur" title="Blur / pixelate (B)">▒<span>Redact</span></button>
         </div>
-        <div id="swatches" class="tool-group swatches" aria-label="Color"></div>
-        <div class="tool-group widths" aria-label="Stroke width">
+        <div id="swatches" class="tool-group swatches" role="group" aria-label="Color"></div>
+        <div class="tool-group widths" role="group" aria-label="Stroke width">
           <button data-width="2" title="Thin"><i style="height:2px"></i></button>
           <button data-width="4" title="Medium"><i style="height:4px"></i></button>
           <button data-width="8" title="Thick"><i style="height:7px"></i></button>
         </div>
-        <div class="tool-group blur-modes" aria-label="Redaction style">
+        <div class="tool-group blur-modes" role="group" aria-label="Redaction style">
           <button data-blur="pixelate" title="Pixelate">▦<span>Pixelate</span></button>
           <button data-blur="blur" title="Blur">◌<span>Blur</span></button>
         </div>
@@ -68,9 +69,12 @@
           <button id="btn-undo" title="Undo (Ctrl+Z)">↶<span>Undo</span></button>
           <button id="btn-redo" title="Redo (Ctrl+Shift+Z)">↷<span>Redo</span></button>
           <button id="btn-delete" title="Delete selected (Del)">🗑<span>Delete</span></button>
+          <button id="btn-duplicate" title="Duplicate selected (Ctrl+D)">⧉<span>Duplicate</span></button>
+          <button id="btn-forward" title="Bring forward (Ctrl+])">⬆<span>Forward</span></button>
+          <button id="btn-backward" title="Send backward (Ctrl+[)">⬇<span>Back</span></button>
           <button id="btn-clear-crop" title="Remove crop">⛶<span>Uncrop</span></button>
         </div>
-        <div class="tool-group zoom" aria-label="Zoom">
+        <div class="tool-group zoom" role="group" aria-label="Zoom">
           <button id="btn-zoom-in" title="Zoom in (Ctrl + = or Ctrl + scroll)">＋<span>Zoom in</span></button>
           <button id="btn-zoom" title="Toggle fit / 100% (Ctrl + 0)">⤢<span>Fit</span></button>
           <button id="btn-zoom-out" title="Zoom out (Ctrl + −)">−<span>Zoom out</span></button>
@@ -217,6 +221,9 @@
             <dt><kbd>Ctrl</kbd> <kbd>Z</kbd></dt><dd>Undo</dd>
             <dt><kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Z</kbd></dt><dd>Redo</dd>
             <dt><kbd>Del</kbd></dt><dd>Delete selected</dd>
+            <dt><kbd>Ctrl</kbd> <kbd>D</kbd></dt><dd>Duplicate selected</dd>
+            <dt><kbd>←</kbd> <kbd>↑</kbd> <kbd>→</kbd> <kbd>↓</kbd></dt><dd>Nudge selected 1 px (Shift: 10 px)</dd>
+            <dt><kbd>Ctrl</kbd> <kbd>]</kbd> / <kbd>[</kbd></dt><dd>Bring forward / send backward</dd>
             <dt><kbd>Esc</kbd></dt><dd>Back to Select</dd>
             <dt><kbd>Ctrl</kbd> <kbd>C</kbd></dt><dd>Copy image</dd>
             <dt><kbd>Ctrl</kbd> <kbd>S</kbd></dt><dd>Save</dd>

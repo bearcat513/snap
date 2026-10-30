@@ -2,7 +2,7 @@
 // settings, and templates (which can bring their own fields and placeholder text).
 
 import { applyTemplate, activeTemplate, contextFields } from '../shared/settings.js';
-import { el } from './ui.js';
+import { el, wireMenu } from './ui.js';
 
 export class ContextForm extends EventTarget {
   /**
@@ -173,13 +173,12 @@ export class ContextForm extends EventTarget {
     btn.textContent = active ? `${active.name} ▾` : 'Template ▾';
     menu.replaceChildren(...this.settings.templates.map((t) => el('button', {
       role: 'menuitemradio', 'aria-checked': String(t === active),
-      onclick: () => { menu.hidden = true; this.apply(t); },
+      onclick: () => this.apply(t),
     }, t === active ? `✓ ${t.name}` : t.name)),
-    active ? el('button', { role: 'menuitem', onclick: () => { menu.hidden = true; this.clearTemplate(); } }, 'No template') : null);
+    active ? el('button', { role: 'menuitem', onclick: () => this.clearTemplate() }, 'No template') : null);
     if (this.menuBound) return;
     this.menuBound = true;
-    btn.addEventListener('click', (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; });
-    document.addEventListener('click', () => { menu.hidden = true; });
+    wireMenu(btn, menu);
   }
 
   apply(template) {

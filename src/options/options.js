@@ -1,6 +1,6 @@
 // Options page (§14). Inputs with data-key bind to settings (sync or local storage); managed keys are locked.
 
-import { getSettings, setSettings, normalizeHost, isBuiltinSnHost, customSnHosts, DEFAULTS } from '../shared/settings.js';
+import { getSettings, setSettings, normalizeHost, isBuiltinSnHost, customSnHosts, settingsExport, parseSettingsImport, DEFAULTS } from '../shared/settings.js';
 import { buildFileName } from '../shared/naming.js';
 import { endpointOrigin } from '../storage/s3.js';
 import { formatBytes } from '../shared/util.js';
@@ -415,6 +415,34 @@ $('btn-diag-copy').addEventListener('click', async () => {
 });
 $('btn-diag-clear').addEventListener('click', async () => { await clearDiagnostics(); renderDiagnostics(); });
 renderDiagnostics();
+
+// ---------- export / import ----------
+
+$('btn-settings-export').addEventListener('click', () => {
+  const data = settingsExport(settings, chrome.runtime.getManifest().version);
+  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+  const a = h('a', { href: url, download: 'snap-companion-settings.json' });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast('Settings exported (without tokens)');
+});
+$('btn-settings-import').addEventListener('click', () => $('settings-file').click());
+$('settings-file').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const { patch, ignored } = parseSettingsImport(await file.text());
+    const n = Object.keys(patch).length;
+    const ok = confirm(`Replace ${n} setting${n === 1 ? '' : 's'} with the ones in ${file.name}? Only import files you trust: they can change where captures are sent. Your tokens are kept.${ignored.length ? ` ${ignored.length} unknown value${ignored.length === 1 ? ' is' : 's are'} ignored.` : ''}`);
+    if (!ok) return;
+    await setSettings(patch);
+    location.reload(); // every list on this page is built from the settings
+  } catch (err) {
+    toast(`Not imported: ${err.message}`);
+  }
+});
+$('btn-welcome').addEventListener('click', () => chrome.tabs.create({ url: chrome.runtime.getURL('src/welcome/welcome.html') }));
 
 // ---------- misc ----------
 

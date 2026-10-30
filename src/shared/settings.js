@@ -33,6 +33,7 @@ export const DEFAULTS = {
   's3.oidcAuthUrl': '',
   's3.keyPrefix': '',
   'capture.delaySeconds': 0, // popup screenshots: 0 | 3 | 5 | 10
+  'capture.afterAction': 'editor', // after a screenshot: 'editor' | 'copy' (and open) | 'save' (defaults, no editor)
   'capture.elementPadding': 8, // CSS px around a captured element
   'capture.viewports': [375, 768, 1280], // widths for multi-viewport capture
   'recording.trackClicks': true, // remember what was clicked, for guides
@@ -121,6 +122,42 @@ export const ALL_DESTINATIONS = ['download', 's3', 'servicenow', 'webhook', 'jir
 export const LOCAL_KEYS = ['templates', 'customFields', 'webhook.token', 'jira.apiToken', 'github.token'];
 export const SECRET_KEYS = ['webhook.token', 'jira.apiToken', 'github.token'];
 const SYNC_ITEM_LIMIT = 8192; // chrome.storage.sync.QUOTA_BYTES_PER_ITEM
+
+const NOT_EXPORTED = new Set([...SECRET_KEYS, 'jira.email']); // credentials and personal details stay out of shared files
+const EXPORT_FORMAT = 'snap-companion-settings';
+
+/** A settings file to back up or share: no tokens, no policy-controlled values. */
+export function settingsExport(settings, version = '') {
+  const out = {};
+  for (const k of Object.keys(DEFAULTS)) if (!NOT_EXPORTED.has(k) && !settings.locked?.includes(k)) out[k] = settings[k];
+  out.snHosts = (settings.snHosts || []).filter((h) => !settings.managedSnHosts?.includes(h));
+  return { format: EXPORT_FORMAT, version: 1, extensionVersion: version, exportedAt: new Date().toISOString(), settings: out };
+}
+
+const kindOf = (v) => (Array.isArray(v) ? 'array' : typeof v);
+
+/** Validate a settings file's text. Returns { patch, ignored }; throws a readable Error if it isn't one. */
+export function parseSettingsImport(text) {
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error('That file is not valid JSON.');
+  }
+  if (data?.format !== EXPORT_FORMAT || !data.settings || typeof data.settings !== 'object') throw new Error('That is not a Snap Companion settings file.');
+  const patch = {};
+  const ignored = [];
+  for (const [k, v] of Object.entries(data.settings)) {
+    if (!(k in DEFAULTS) || NOT_EXPORTED.has(k) || kindOf(v) !== kindOf(DEFAULTS[k])) ignored.push(k);
+    else patch[k] = v;
+  }
+  if (patch['redaction.custom']) {
+    patch['redaction.custom'] = patch['redaction.custom'].filter((src) => {
+      try { new RegExp(src); return true; } catch { return false; }
+    });
+  }
+  return { patch, ignored };
+}
 
 /** Move keys that older versions kept in sync into local storage. Safe to run repeatedly. */
 export async function migrateSettings() {

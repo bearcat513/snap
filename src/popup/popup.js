@@ -50,7 +50,9 @@ async function init() {
     $('pending').hidden = false;
     $('pending-text').textContent = t(p.mode === 'record-tab' ? 'popup_pending_record' : 'popup_pending_shot', p.servicenow?.label || t('common_record'));
   }
+  $('btn-extend').hidden = !state?.canExtend;
   renderRecording(state?.recording);
+  renderLimit();
   renderSession(state?.session);
   $('opt-devtools').checked = !!state?.devtools;
   $('opt-devtools').disabled = !capturable;
@@ -84,6 +86,14 @@ function renderRecording(rec) {
   tick();
   if (!rec.paused) timer = setInterval(tick, 500);
 }
+
+/** The last minute before the time limit (set by the recorder through the worker). */
+async function renderLimit() {
+  const { recLeft } = await chrome.storage.session.get('recLeft');
+  $('limit').hidden = !Number.isFinite(recLeft);
+  if (Number.isFinite(recLeft)) $('limit-text').textContent = t('limit_stops_in', Math.max(0, Math.ceil(recLeft / 1000)));
+}
+chrome.storage.onChanged.addListener((changes, area) => { if (area === 'session' && changes.recLeft) renderLimit(); });
 
 async function renderRecent() {
   const list = $('recent');
@@ -189,6 +199,7 @@ $('btn-pending').addEventListener('click', async () => {
 $('btn-pause').addEventListener('click', async () => { await send({ type: 'record:pause' }); refreshState(); });
 $('btn-resume').addEventListener('click', async () => { await send({ type: 'record:resume' }); refreshState(); });
 $('btn-stop').addEventListener('click', async () => { await send({ type: 'record:stop' }); window.close(); });
+$('btn-extend').addEventListener('click', () => send({ type: 'record:extend' }));
 $('btn-library').addEventListener('click', () => { send({ type: 'open:library' }); window.close(); });
 $('btn-options').addEventListener('click', () => { chrome.runtime.openOptionsPage(); window.close(); });
 $('btn-sidepanel').addEventListener('click', async () => {

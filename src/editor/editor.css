@@ -237,3 +237,17 @@ button.icon { padding: 2px 6px; font-size: 12px; color: var(--muted); }
 .transcript button { display: grid; grid-template-columns: 52px 1fr; gap: 8px; width: 100%; text-align: left; border: 0; background: none; padding: 3px 4px; }
 .transcript button:hover { background: var(--surface-2); }
 .transcript .t { font-family: ui-monospace, monospace; color: var(--muted); }
+
+/* ---- save progress ---- */
+.save-progress { padding: 8px 12px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.save-progress-head { display: flex; align-items: center; gap: 10px; }
+.save-progress progress { width: 220px; flex: none; }
+.save-steps { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; }
+.save-steps li { display: flex; align-items: center; gap: 6px; }
+.save-steps .st { font-weight: 700; color: var(--muted); }
+.save-steps .done .st { color: var(--ok); }
+.save-steps .failed .st { color: var(--danger); }
+.save-steps .active .st { color: var(--accent); }
+
+/* ---- importing images into the library ---- */
+.library.dropping { outline: 2px dashed var(--accent); outline-offset: -8px; }

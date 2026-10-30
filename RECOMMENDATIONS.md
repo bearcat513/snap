@@ -8,6 +8,99 @@ Legend for sections 5–6: ✅ implemented · ◐ implemented in part (see notes
 
 Legend: ✅ implemented on this branch · ⬜ not yet
 
+**Start with [What to do next](#what-to-do-next).** It is the current priority list, checked against the code on 2026-10-30. Sections 1–6 are the record of earlier reviews.
+
+---
+
+## What to do next
+
+✅ marks what's implemented; these are uncommitted on `main` as of 2026-10-30. Each list is in priority order. Priority favors what people hit on most captures, then what is cheap to do. Effort is a rough estimate: **S** is up to a day, **M** is a few days, **L** is a week or more. "Backlog" points to the earlier entry where the idea first appeared.
+
+### First: fix before adding anything
+
+| # | Fix | Why | Effort |
+|---|---|---|---|
+| 1 | **Get unit tests passing in CI** | The last four runs on `main` failed. The `unit` job uses Node 22, where `node --test tests/` fails with `Cannot find module '.../tests'`; it passes locally on Node 26. The release job needs a green run, so nothing can ship. Change the script to a form that works on both, such as `node --test "tests/*.test.js"`. | S |
+| 2 | ✅ **Don't let one failed export skip the remaining destinations** | `runSavePlan()` wraps the whole plan in a single `try` (`src/editor/save-runner.js`). If building a file throws, every later destination is skipped and only a generic editor error is recorded. Catch errors per step, so each destination succeeds or fails on its own and can be retried. | S |
+
+### New features
+
+| # | Feature | Why | Effort | Backlog |
+|---|---|---|---|---|
+| 1 | ✅ **Choose what happens after a capture** | Every screenshot opens an editor tab, even when you only want to paste it. Offer *open the editor*, *copy and open*, or *save to the default destinations*. Copying from the worker needs an offscreen document with the `CLIPBOARD` reason. | M | §2.4 |
+| 2 | ✅ **Copy link after saving** | S3, Jira and GitHub saves produce URLs, but the editor only shows them as plain links in its save history, and there's no copy button there or in the library or side panel. Sharing the link is usually the next step, so offer *Copy link* as soon as the save finishes and in the library's ⋯ menu. | S | New |
+| 3 | ✅ **Open or paste any image into the editor** | `Ctrl+V` or drag-and-drop on the library would bring screenshots from other tools into the same annotation, redaction and save flow. | S | §1.5 |
+| 4 | ✅ **Duplicate, nudge and layer order** | `Ctrl+D`, arrow keys to nudge, and bring forward / send back. These are standard in markup tools and are missing from the canvas engine. | S | §4.4 |
+| 5 | ✅ **Export and import settings** | Templates, custom fields, the palette and hosts have to be recreated by hand, and templates and custom fields don't sync between devices. Teams without Chrome policy have no way to share a setup. Leave tokens out of the export. | S | §2.5 |
+| 6 | **Microphone picker and level meter** | Recordings always use the default mic, and you can't tell it was silent until playback. A ruined narrated recording can't be fixed afterwards. | M | §3.5 |
+| 7 | **Spotlight, magnifier and text styles** | Dim everything outside a region, add a zoomed callout, and offer text sizes and a callout shape. These make the biggest difference to documentation screenshots. | M | §4.5, §4.6 |
+| 8 | **Faster video export with WebCodecs** | Export takes as long as the clip and needs the tab visible, which is the largest remaining wait in the app. It would also make feature 9 practical. This needs a muxer written or vendored to keep the no-dependency rule. | L | §4.9 |
+| 9 | **Cut segments and speed up idle stretches** | Today you can only trim the ends, so a mistake in the middle of a walkthrough means recording again. Build this after feature 8, because more edits make real-time export slower. | L | §4.10 |
+| 10 | **Per-site destination rules** | For example, send captures from `dev.service-now.com` to S3 + Download. Most useful to people who work across several instances. | M | §2.7 |
+| 11 | **Webcam bubble** | A camera overlay for narrated walkthroughs. It's a popular feature but adds a new permission and a canvas compositing path, so it comes after the items above. | L | §3.4 |
+
+Lower priority: suggested redaction for text inside images, canvases and cross-origin frames. The DOM scanner can't see those, but OCR would mean bundling a large on-device model. Recordings also have no suggestions and rely on manual regions.
+
+### User experience improvements
+
+| # | Improvement | Why | Effort | Backlog |
+|---|---|---|---|---|
+| 1 | ✅ **Undo after deleting from the library** | Deleting a capture that has been saved happens immediately, with no confirmation and no undo. Unsaved captures get a confirm dialog instead. Use one "Deleted · Undo" toast for both. | S | §1.9 |
+| 2 | ✅ **Warn before the time limit stops a recording** | `recording.maxMinutes` (10 by default) stops the recording with a plain timer and no warning (`src/shared/recording.js`). Show the remaining time on the badge in the last minute and a notice at 30 s, and offer *Keep recording* where policy allows it. | S | §3.6 |
+| 3 | ✅ **Real save progress** | Progress is a line of small text next to the Save button. Add a progress bar and per-destination rows showing done, failed and retry. For video exports, show time remaining and warn that the tab must stay visible. | M | §1.8 |
+| 4 | ✅ **First-run welcome page** | `onInstalled` only builds context menus, so new users never learn about pinning, shortcuts or `/snap`. A short page should cover those and link to the setup for each destination. | S | §1.4 |
+| 5 | ✅ **Keyboard and screen reader support in the editor** | Tool, color, width and redaction buttons show their state with a CSS class only (`editor.js:245–260`). Add `aria-pressed` and labels. *Export ▾* has no arrow-key navigation and doesn't close on `Esc` (`editor.js:829`). | M | §1.6 |
+| 6 | **Simpler popup** | The popup puts 8 capture tiles, a delay control, a debugger checkbox and the recent list in one view, with the most common actions getting no more weight than the rare ones. Keep Visible, Region and Record tab prominent, and move Viewports, Session and the console option under *More*. | S | New |
+| 7 | **Search in Settings** | Settings has 12 tabs, and it isn't obvious that, say, GIF options are under Recording. A filter box would find any setting. | S | New |
+| 8 | **Collapsible editor sidebar** | The 320 px context panel takes a lot of room on a laptop, and video especially needs the space. Remember the choice per device. | S | §1.7 |
+| 9 | **Warn sooner about full storage** | The popup only says storage is full once recording is blocked. Warn at about 80%, and offer *Save and clear* or a link to the library. | S | New |
+| 10 | **Respect reduced motion** | No stylesheet handles `prefers-reduced-motion`. Check the countdown, click rings and toasts. | S | New |
+| 11 | **Finish localization** | The editor, library and Settings page are still English-only, and they hold most of the strings. Do this just before adding a first translation, since it means little until then. | M | §5.9 |
+
+### Implemented from this list
+
+**Fixed: failed exports** (`src/editor/save-runner.js`). The save progress rows need a result per destination, so this came with them. Each destination now succeeds or fails on its own, and a failed step can be retried from the panel or the library.
+
+**After a capture** (`capture.afterAction`, *Settings → Saving*)
+- *Copy it and open the editor* copies from the editor tab once it has loaded, so it needs no offscreen document or new permission.
+- *Save without opening* runs in a background editor tab, because exports need a canvas and `chrome.downloads`, which the worker and offscreen documents don't have. The tab closes itself and the badge shows ✓.
+- It never uploads something unchecked. With unreviewed suggestions, the personal-data reminder or a missing required field, the tab comes forward without saving and says why. Download-only saves follow the editor's existing rule and aren't held back.
+
+**Copy link:** on the save toast, in the save history and in the library's ⋯ menu. `shareLink()` prefers an issue over a file.
+
+**Open or paste an image:** *Open image…*, paste or drop on the library. Imported images are ordinary screenshot captures, with no page data or suggested redactions.
+
+**Duplicate, nudge, layers** (`src/editor/canvas.js`): shortcuts and tool-rail buttons. Quick runs of nudges are one undo step. Redactions and highlights are painted in their own passes, so layer order only moves a shape past others in the same group, and redactions can't be raised over annotations or the reverse.
+
+**Export and import settings:** *Settings → About & diagnostics*. Imports check each value's type, drop unknown keys and invalid patterns, and ask first, because a file can change where captures are sent. Hosts from a file still need Chrome's access grant on the ServiceNow tab.
+
+**Undo delete:** a capture is hidden at once and deleted after 10 s, or when the page is left, in which case the worker finishes it. *Clear library* keeps its confirm dialog. The confirm dialog for unsaved captures is gone, as proposed.
+
+**Time limit** (`src/shared/recording.js`)
+- The limit now counts recorded time, so a pause no longer uses it up. A capture stopped by the limit says so in the editor.
+- **Changed from the proposal:** there's no on-page notice at 30 s, because it would appear in the recording. The warning is on the badge, which turns red at 30 s, and in the popup and recorder window.
+- *Keep recording* adds 5 minutes and is hidden when policy sets the limit.
+
+**Save progress** (`src/editor/save-progress.js`): an overall bar, a row per destination with *Retry* on failures, and time remaining during slow exports. The panel hides itself after a clean run.
+
+**Welcome page** (`src/welcome/`): opens on first install only, and from *Settings → About & diagnostics*. It's English-only, like the other pages not yet localized.
+
+**Accessibility:** `aria-pressed` and clean names on the tool rail, labelled groups, and full keyboard behavior for the Export, Template and library menus (`wireMenu()` in `src/editor/ui.js`). **Still mouse-only:** drawing and selecting shapes on the canvas.
+
+**Not tested end to end:**
+- the *Retry* button in the progress panel, though the retry plan and the save it calls are covered
+- *Keep recording* and the countdown during a tab recording, because tab capture needs a gesture; the e2e run uses a window recording, which shares the same engine
+- dropping a file on the library, and the *Open image…* picker; both use the same import as paste, which is tested
+- screen readers: the attributes are checked, but no screen reader has been run
+
+### Recommended order
+
+1. **Fix CI:** the first item under *First* is still open.
+2. **Quick wins:** improvements 7, 8, 9 and 10 (Settings search, sidebar, storage warning, reduced motion).
+3. **Faster everyday use:** the popup (improvement 6).
+4. **Better recordings:** feature 6, then features 8 and 9.
+5. **As demand appears:** features 7, 10 and 11, then localization.
+
 ---
 
 ## 1. UI / UX
@@ -180,7 +273,7 @@ These items harden, fix or extend things the app already does. Several close ope
 **5. CI** (`.github/workflows/ci.yml`, `scripts/check-version.mjs`)
 - Unit tests, plus e2e on Chrome stable with Edge as an informational job. `tests/e2e/cdp.mjs` accepts `CHROME_ARGS` for `--no-sandbox`.
 - On `v*` tags, the workflow checks that tag, manifest and package versions match, then publishes `snap-companion.zip` to a GitHub release.
-- **Not yet run on GitHub:** the workflow was written and the version guard tested locally, but no push has happened.
+- **Status on GitHub (2026-10-30):** the workflow now runs on push. Both e2e jobs passed in the latest run, but the `unit` job is failing (see [What to do next](#what-to-do-next)).
 
 **6. Diagnostics** (`src/shared/diagnostics.js`, *Settings → About & diagnostics*)
 - A 100-entry ring buffer in `storage.local`. It's fed by worker errors, message-handler failures, uncaught errors in the worker, editor, recorder, offscreen and options pages, and every failed save or retry.
@@ -197,7 +290,7 @@ These items harden, fix or extend things the app already does. Several close ope
 - Converted so far: context menus, the popup (including script-built strings), the recorder window and the side panel.
 - **Not converted:** the editor, library and Settings page are still English-only. They're the bulk of the strings, and the test fails if a referenced key is missing, so the rest can move over incrementally.
 
-**10. Edge (partial):** CI runs the e2e suite against Edge stable, and the README has a *Browser support* section. **Not verified:** Edge isn't installed on this machine, so no Edge run has happened yet. The CI job is `continue-on-error` until it has.
+**10. Edge (partial):** CI runs the e2e suite against Edge stable, and the README has a *Browser support* section. The CI e2e job passed on Edge in the latest run (2026-10-27). **Not verified:** a desktop Edge install, including the gesture paths that headless runs can't cover. The CI job stays `continue-on-error` for now.
 
 **11. Templates by table:** templates take an optional comma-separated `tables` list (Settings, and `templates[].tables` in policy). The first match is applied once to a new `/snap` capture, and the editor names the template it applied.
 
@@ -293,6 +386,8 @@ These items harden, fix or extend things the app already does. Several close ope
 
 ## Verification
 
+*What to do next* items: `npm test` 86/86 and `npm run test:e2e` 89/89 with no runtime errors, on Chrome 156 (macOS, headless). The new `ux` e2e section adds 24 of those checks.
+
 First pass (sections 1–4):
 
 - `npm test`: 30/30 pass, including new `tests/settings.test.js` for palette normalization and the quality presets.
@@ -316,8 +411,7 @@ Second pass (sections 5–6):
   - console/network capture with URL sanitizing
   - side panel, options page (trackers, diagnostics, token chips) and popup localization
 - **Not verified here:**
-  - Edge, which isn't installed
-  - the GitHub Actions workflow, which hasn't been pushed
+  - Edge on the desktop (CI covers the headless e2e run)
   - real Jira or GitHub servers
   - on-device captions
   - real tab recordings, which need a gesture

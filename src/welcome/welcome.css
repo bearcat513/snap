@@ -1,0 +1,12 @@
+body { background: var(--bg); }
+main { max-width: 640px; margin: 0 auto; padding: 32px 16px; }
+header { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 20px; }
+header h1 { margin: 0 0 4px; font-size: 22px; }
+header p { margin: 0; }
+section { padding: 14px 16px; margin-bottom: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+section h2 { margin: 0 0 6px; font-size: 14px; }
+section p { margin: 0 0 8px; }
+section p:last-child { margin-bottom: 0; }
+.shortcuts, .links { margin: 0 0 8px; padding: 0; list-style: none; display: grid; gap: 4px; }
+.links { margin-bottom: 0; }
+.row { display: flex; gap: 8px; }
